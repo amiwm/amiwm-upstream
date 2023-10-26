@@ -2,12 +2,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
 
 #include "alloc.h"
 #include "drawinfo.h"
 #include "prefs.h"
 #include "screen.h"
 #include "client.h"
+#include "icon.h"
 #include "version.h"
 
 #ifdef AMIGAOS
@@ -28,14 +32,19 @@ extern struct Library *XLibBase;
 extern Display *dpy;
 extern Cursor wm_curs;
 extern XContext screen_context, client_context;
+extern Client *activeclient;
 
 extern void select_all_icons(Scrn *i);
+extern void mod_menuselect(struct module *, int, int, int);
+extern void setfocus(Window);
+extern void flushmodules();
 
 Scrn *mbdclick=NULL, *mbdscr=NULL;
 
 static struct ToolItem {
   struct ToolItem *next;
   const char *name, *cmd;
+  char hotkey;
   int level;
   struct Menu *submenu;
 } *firsttoolitem=NULL, *lasttoolitem=NULL;
@@ -47,6 +56,8 @@ static struct Item {
   int textlen;
   char hotkey, flags;
   struct Menu *menu, *sub;
+  struct module *owner;
+  struct Item *mod_chain;
 } *activeitem=NULL, *activesubitem=NULL;
 
 static struct Menu {
@@ -73,14 +84,30 @@ void spawn(const char *cmd)
 #else
 void spawn(const char *cmd)
 {
+  extern char *x_server;
 #ifdef HAVE_ALLOCA
-  char *line=alloca(strlen(cmd)+4);
+  char *line=alloca(strlen(x_server)+strlen(cmd)+28);
 #else
-  char *line=malloc(strlen(cmd)+4);
+  char *line=malloc(strlen(x_server)+strlen(cmd)+28);
   if(line) {
 #endif
-  sprintf(line, "%s &", cmd);
+  char *dot;
+  sprintf(line, "DISPLAY='%s", x_server);
+  if(!(dot=strrchr(line, '.')) || strchr(dot, ':'))
+    dot=line+strlen(line);
+  sprintf(dot, ".%d' %s &", scr->number, cmd);
+#ifdef __ultrix
+  {
+    int pid, status;
+    if ((pid = fork ()) == 0) {
+      (void) setsid();
+      execl ("/bin/sh", "sh", "-c", line, 0);
+    } else
+      waitpid (pid, &status, 0);
+  }
+#else
   system(line);
+#endif
 #ifndef HAVE_ALLOCA
     free(line);
   }
@@ -88,12 +115,16 @@ void spawn(const char *cmd)
 }
 #endif
 
-void add_toolitem(const char *n, const char *c, int l)
+void add_toolitem(const char *n, const char *c, const char *k, int l)
 {
   struct ToolItem *ti;
   if((ti=malloc(sizeof(struct ToolItem)))) {
     ti->name=n;
     ti->cmd=c;
+    if(k)
+      ti->hotkey=k[0];
+    else
+      ti->hotkey=0;
     ti->level=l;
     ti->next=NULL;
     if(lasttoolitem)
@@ -383,10 +414,10 @@ void createmenubar()
 
   for(ti=firsttoolitem; ti; ti=ti->next)
     if(ti->level<0)
-      ti->submenu=sm1=sub_menu(add_item(m,ti->name,0,0),0);
+      ti->submenu=sm1=sub_menu(add_item(m,ti->name,ti->hotkey,0),0);
     else {
       ti->submenu=NULL;
-      add_item((ti->level? sm1:m), ti->name,0,(ti->cmd? 0:DISABLED));
+      add_item((ti->level? sm1:m), ti->name,ti->hotkey,(ti->cmd? 0:DISABLED));
     }
   menu_layout(m);
   for(ti=firsttoolitem; ti; ti=ti->next)
@@ -532,13 +563,13 @@ void menubar_enter(Window w)
       enter_menu(m, w);
       return;
     }
-  if(m=activemenu)
+  if((m=activemenu))
     for(i=m->firstitem; i; i=i->next)
       if(w==i->win) {
 	enter_item(i, w);
 	return;
       }
-  if(m=activesubmenu)
+  if((m=activesubmenu))
     for(i=m->firstitem; i; i=i->next)
       if(w==i->win) {
 	enter_item(i, w);
@@ -582,10 +613,19 @@ void menuaction(struct Item *i, struct Item *si)
 
   for(m=i->menu->next; m; m=m->next) menu++;
   for(mi=i->menu->firstitem; mi&&mi!=i; mi=mi->next) item++;
-  if(i->sub)
+  if(i->sub) {
     for(mi=i->sub->firstitem; mi&&mi!=si; mi=mi->next) sub++;
-  else
+    if(!mi)
+      sub=-1;
+  } else
     --sub;
+  mi=(sub>=0? si:i);
+  if(mi->flags & DISABLED)
+    return;
+  if(mi->owner) {
+    mod_menuselect(mi->owner, menu, item, sub);
+    return;
+  }
   switch(menu) {
   case 0: /* Workbench */
     switch(item) {
@@ -638,9 +678,9 @@ void menuaction(struct Item *i, struct Item *si)
 #else
 	char buf[256];
 #endif
-	sprintf(buf, "( if [ `"BIN_PREFIX"requestchoice Workbench '"
-		"Do you really want\nto quit workbench?' Ok Cancel` = 1 ]; "
-		"then kill %d; fi; )", getpid());
+	sprintf(buf, "; export DISPLAY; ( if [ `"BIN_PREFIX"requestchoice "
+		"Workbench 'Do you really want\nto quit workbench?' Ok Cancel`"
+		" = 1 ]; then kill %d; fi; )", (int)getpid());
 	spawn(buf);
       }
 #endif
@@ -690,7 +730,8 @@ void menu_off()
     Window r,p,*children;
     unsigned int nchildren;
     XUngrabPointer(dpy, CurrentTime);
-    XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
+    setfocus((activeclient && activeclient->state==NormalState?
+	      activeclient->window:None));
     XUnmapWindow(dpy, scr->menubarparent);
     if(XQueryTree(dpy, scr->back, &r, &p, &children, &nchildren)) {
       int n;
@@ -708,16 +749,16 @@ void menu_off()
       if(children) XFree(children);
     }
   }
-  if(osi=activesubitem)
+  if((osi=activesubitem))
     leave_item(osi, osi->win);
-  if(oi=activeitem)
+  if((oi=activeitem))
     leave_item(oi, oi->win);
-  if(oa=activesubmenu) {
+  if((oa=activesubmenu)) {
     activesubmenu=NULL;
     if(oa->parent)
       XUnmapWindow(dpy, oa->parent);
   }
-  if(oa=activemenu) {
+  if((oa=activemenu)) {
     activemenu=NULL;
     if(oa->parent)
       XUnmapWindow(dpy, oa->parent);
@@ -745,4 +786,74 @@ struct Item *getitembyhotkey(char key)
 	  return i;
   }
   return NULL;
+}
+
+static struct Item *own_item(struct module *m, struct Item *i, struct Item *c)
+{
+  if(i->owner)
+    return NULL;
+  i->owner = m;
+  i->mod_chain = c;
+  i->flags &= ~DISABLED;
+  redraw_item(i, i->win);
+  return i;
+}
+
+void disown_item_chain(struct module *m, struct Item *i)
+{
+  while(i)
+    if(i->owner == m) {
+      struct Item *c = i->mod_chain;
+      i->owner = NULL;
+      i->mod_chain = NULL;
+      i->flags |= DISABLED;
+      redraw_item(i, i->win);
+      i = c;
+    } else
+      i=i->mod_chain;
+}
+
+struct Item *own_items(struct module *m, Scrn *s,
+		       int menu, int item, int sub, struct Item *c)
+{
+  struct Item *cl, *chain = NULL, *endlink = NULL;
+  int m0, m1, mn;
+  struct Menu *mm;
+  if(!s) return NULL;
+  if(menu<0) {
+    m0 = 0; m1 = 65535;
+  } else m0 = m1 = menu;
+  for(mn=0, mm=s->firstmenu; mm && mn <= m1; mm=mm->next, mn++)
+    if(mn>=m0) {
+      int i0, i1, in;
+      struct Item *ii;
+      if(item<0) {
+	i0 = 0; i1 = 65535;
+      } else i0 = i1 = item;
+      for(in=0, ii=mm->firstitem; ii && in <= i1; ii=ii->next, in++)
+	if(in>=i0) {
+	  int s0, s1, sn;
+	  struct Item *ss;
+	  if(!(cl=own_item(m, ii, chain))) {
+	    disown_item_chain(m, chain);
+	    return NULL;
+	  } else chain=cl;
+	  if(!endlink) endlink=chain;
+	  if(ii->sub) {
+	    if(sub<0) {
+	      s0 = 0; s1 = 65535;
+	    } else s0 = s1 = sub;
+	    for(sn=0, ss=ii->sub->firstitem; ss && sn <= i1; ss=ss->next, sn++)
+	      if(sn>=s0) {
+		if(!(cl=own_item(m, ss, chain))) {
+		  disown_item_chain(m, chain);
+		  return NULL;
+		} else chain=cl;
+	      }
+	  }
+	}
+    }
+  if(endlink)
+    endlink->next = c;
+  return chain;
 }

@@ -18,6 +18,7 @@ typedef struct _Scrn {
   int hotkeyspace, checkmarkspace, subspace, menuleft;
   struct _Icon *icons, *firstselected;
   struct Menu *firstmenu;
+  int number;
 } Scrn;
 
 extern Scrn *scr, *front;

@@ -8,6 +8,7 @@
 #include "icon.h"
 #include "client.h"
 #include "icc.h"
+#include "prefs.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -16,6 +17,9 @@ extern struct Library *XLibBase;
 
 extern Display *dpy;
 extern XContext client_context, screen_context;
+extern Client *activeclient;
+extern Scrn *menuactive;
+extern void setfocus(Window);
 
 Client *clients=NULL;
 
@@ -214,18 +218,25 @@ Client *createclient(Window w)
 void rmclient(Client *c)
 {
     Client *cc;
-    int i;
 
     if (c == clients)
       clients = c->next;
     else
-      if(cc = clients)
+      if((cc = clients))
 	for (; cc->next; cc = cc->next)
 	  if (cc->next == c) {
             cc->next = cc->next->next;
 	    break;
 	  }
 
+    if(c->active) {
+      if(!menuactive)
+	setfocus(None);
+      c->active=False;
+      activeclient = NULL;
+      XInstallColormap(dpy, scr->cmap);
+    } else if(prefs.focus==FOC_CLICKTOTYPE)
+      XUngrabButton(dpy, Button1, AnyModifier, c->parent);
     if(c->title.value)
       XFree(c->title.value);
     if(c->parent != c->scr->root) {
@@ -256,7 +267,9 @@ void flushclients()
   unsigned int i, nwins;
   Window dw1, dw2, *wins;
   Client *c;
+#ifdef ASSIMILATE_WINDOWS
   Scrn *scr2;
+#endif
 
   if((scr = front)) do {
     scr = scr->upfront;
@@ -295,7 +308,7 @@ void flushclients()
       */
     XFree((void *) wins);
   } while(scr!=front);
-  while(c=clients) {
+  while((c=clients)) {
     if(c->parent != c->scr->root) {
       int x,y;
       grav_map_frame_to_win(c, c->x, c->y, &x, &y);

@@ -1,4 +1,7 @@
 %{
+#include <X11/Xmu/CharSet.h>
+#include <string.h>
+
 #include "libami.h"
 #include "kbdmodule.h"
 
@@ -11,7 +14,7 @@ extern char *progname;
 #define YY_INPUT(buf,result,size) ((result) = doinput((buf),(size)))
 int doinput (char *buf, int size)
 {
-  int l=strlen(inptr);
+  int l=strlen((char *)inptr);
   if(l>size) l=size;
   if(l>0) {
     memcpy(buf, inptr, l);
@@ -23,16 +26,22 @@ int doinput (char *buf, int size)
 
 static void k_rotscreens(Window w)
 {
-  md_rotate_screen(None);
+  Window root;
+  int x, y;
+  unsigned int width, height, bw, d;
+  if(XGetGeometry(md_display(), w, &root, &x, &y, &width, &height, &bw, &d))
+    md_rotate_screen(root);
 }
+
+typedef void (*mdfuncp)(Window);
 
 int parse_keyword(char *str, YYSTYPE *val)
 {
-   struct { char *name; void (*func)(Window); } functab[] = {
-     { "back", md_back },
-     { "front", md_front },
-     { "iconify", md_iconify },
-     { "rotatescreens", k_rotscreens },
+   struct { char *name; mdfuncp func; } functab[] = {
+     { "back", (mdfuncp)md_back },
+     { "front", (mdfuncp)md_front },
+     { "iconify", (mdfuncp)md_iconify },
+     { "rotatescreens", (mdfuncp)k_rotscreens },
    };
 #define N_FUNC (sizeof(functab)/sizeof(functab[0]))
    struct { char *name; int token, num; } kwtab[] = {

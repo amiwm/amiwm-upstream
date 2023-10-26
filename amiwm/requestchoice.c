@@ -140,10 +140,10 @@ void refresh_choice(struct choice *c)
 void split(char *str, const char *delim, void (*func)(const char *))
 {
   char *p;
-  if(p=strtok(str, delim))
+  if((p=strtok(str, delim)))
     do {
       (*func)(p);
-    } while(p=strtok(NULL, delim));
+    } while((p=strtok(NULL, delim)));
 }
 
 struct choice *getchoice(Window w)
@@ -197,8 +197,8 @@ int main(int argc, char *argv[])
 
   progname=argv[0];
   initargs(argc, argv);
-  if(!(ra=ReadArgs("TITLE/A,BODY/A,GADGETS/M", (LONG *)array, NULL))) {
-    PrintFault(IoErr(), progname);
+  if(!(ra=ReadArgs((STRPTR)"TITLE/A,BODY/A,GADGETS/M", (LONG *)array, NULL))) {
+    PrintFault(IoErr(), (UBYTE *)progname);
     exit(1);
   }
   if(!(dpy = XOpenDisplay(NULL))) {
@@ -209,11 +209,12 @@ int main(int argc, char *argv[])
   }
   root = RootWindow(dpy, DefaultScreen(dpy));
   XGetWindowAttributes(dpy, root, &attr);
-  init_dri(&dri, root, attr.colormap, False);
+  init_dri(&dri, dpy, root, attr.colormap, False);
 
   split(array[1].ptr, "\n", addline);
-  for(atp=array[2].ptr; atp->ptr; atp++)
-    split(atp->ptr, "|\n", addchoice);
+  if((atp=array[2].ptr) != NULL)
+    for(; atp->ptr; atp++)
+      split(atp->ptr, "|\n", addchoice);
 
   totw+=BUT_EXTSPACE+BUT_EXTSPACE+BUT_INTSPACE*(nchoices-1);
   toth+=2*(dri.dri_Font->ascent+dri.dri_Font->descent)+TXT_TOPSPACE+
@@ -279,7 +280,7 @@ int main(int argc, char *argv[])
       if(!event.xexpose.count)
 	if(event.xexpose.window == textwin)
 	  refresh_text();
-	else if(c=getchoice(event.xexpose.window))
+	else if((c=getchoice(event.xexpose.window)))
 	  refresh_choice(c);
       break;
     case LeaveNotify:

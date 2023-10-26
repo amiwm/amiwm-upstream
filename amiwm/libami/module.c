@@ -1,7 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#ifdef HAVE_FCNTL_H
+#include <fcntl.h>
+#endif
 #include <signal.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
 
 #include "libami.h"
 #include "module.h"
@@ -89,7 +95,7 @@ void md_process_queued_events()
 {
   struct md_queued_event *e;
 
-  while(e=event_head) {
+  while((e=event_head)) {
     event_head=e->next;
     md_broker_func(&e->e.event, e->e.mask);
     free(e);
@@ -127,7 +133,6 @@ int md_handle_input()
   if(md_read(&res, sizeof(res))!=sizeof(res))
     return -1;
   if(res>=0) {
-    char *buf;
     if(!res)
       return 0;
     md_int_load(res);
@@ -144,6 +149,8 @@ int md_command(XID id, int cmd, void *data, int data_len, char **buffer)
 {
   int res;
   struct mcmd_header mcmd;
+
+  *buffer=NULL;
 
   mcmd.id = id;
   mcmd.cmd = cmd;
@@ -221,4 +228,9 @@ char *md_init(int argc, char *argv[])
 void md_main_loop()
 {
   do md_process_queued_events(); while(md_handle_input()>=0);
+}
+
+int md_connection_number()
+{
+  return md_in_fd;
 }

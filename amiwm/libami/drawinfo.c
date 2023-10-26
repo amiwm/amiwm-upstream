@@ -15,7 +15,6 @@ extern struct Library *XLibBase;
 #define TAG_DRI_FONT    3
 
 extern char *progname;
-extern Display *dpy;
 
 static char black[] = "#000000";
 static char white[] = "#ffffff";
@@ -30,7 +29,8 @@ char *default_colors[NUMDRIPENS] = {
 char *default_screenfont =
 "-b&h-lucida-medium-r-normal-sans-12-*-*-*-*-*-iso8859-1";
 
-static void setdriprop(Atom atom, Atom typ, Window win, struct DrawInfo *dri)
+static void setdriprop(Display *dpy, Atom atom, Atom typ, Window win,
+		       struct DrawInfo *dri)
 {
   CARD32 prop[/* NUMDRIPENS+6 */ 100], *p=prop;
   CARD16 i;
@@ -46,7 +46,8 @@ static void setdriprop(Atom atom, Atom typ, Window win, struct DrawInfo *dri)
 		  (unsigned char *)prop, p-prop);
 }
 
-static void getdriprop(Atom atom, Atom typ, Window win, struct DrawInfo *dri)
+static void getdriprop(Display *dpy, Atom atom, Atom typ, Window win,
+		       struct DrawInfo *dri)
 {
   Atom atyp;
   int afmt;
@@ -74,7 +75,7 @@ static void getdriprop(Atom atom, Atom typ, Window win, struct DrawInfo *dri)
 	    n=nitems-i;
 	  if(n>0) {
 	    dri->dri_NumPens=n;
-	    if(dri->dri_Pens=calloc(sizeof(unsigned long), n))
+	    if((dri->dri_Pens=calloc(sizeof(unsigned long), n)))
 	      for(j=0; j<n; j++)
 		dri->dri_Pens[j]=prop[i++];
 	  }
@@ -90,19 +91,20 @@ Status myXAllocNamedColor(Display *dpy, Colormap cmap, char *color_name,
 			  XColor *screen_def, XColor *exact_def)
 {
   Status s;
-  int len;
 
   if((s=XAllocNamedColor(dpy, cmap, color_name, screen_def, exact_def)))
     return s;
   if((s=XLookupColor(dpy, cmap, color_name, screen_def, exact_def))||
      (s=XParseColor(dpy, cmap, color_name, exact_def))) {
     *screen_def = *exact_def;
+    screen_def->pixel = 0;
+    screen_def->flags = DoRed|DoGreen|DoBlue;
     s=XAllocColor(dpy, cmap, screen_def);
   }
   return s;
 }
 
-unsigned long allocdripen(int n, Colormap cm)
+unsigned long allocdripen(Display *dpy, int n, Colormap cm)
 {
   XColor screen, exact;
   char *name;
@@ -115,7 +117,8 @@ unsigned long allocdripen(int n, Colormap cm)
   return screen.pixel;
 }
 
-void init_dri(struct DrawInfo *dri, Window root, Colormap cm, int override)
+void init_dri(struct DrawInfo *dri, Display *dpy, Window root, Colormap cm,
+	      int override)
 {
   int i;
   Atom driatom, dritypatom;
@@ -124,7 +127,7 @@ void init_dri(struct DrawInfo *dri, Window root, Colormap cm, int override)
   driatom=XInternAtom(dpy, "AMIWM_DRAWINFO", False);
   dritypatom=XInternAtom(dpy, "DRAWINFO", False);
   if(!override)
-    getdriprop(driatom, dritypatom, root, dri);
+    getdriprop(dpy, driatom, dritypatom, root, dri);
   if(!dri->dri_Version)
     dri->dri_Version = DRI_VERSION;
   if(!dri->dri_Pens) {
@@ -133,7 +136,7 @@ void init_dri(struct DrawInfo *dri, Window root, Colormap cm, int override)
       exit(1);
     }
     for(i=0; i<NUMDRIPENS; i++)
-      dri->dri_Pens[i] = allocdripen(i, cm);
+      dri->dri_Pens[i] = allocdripen(dpy, i, cm);
     dri->dri_NumPens = NUMDRIPENS;
   }
   if(!dri->dri_Font)
@@ -143,5 +146,5 @@ void init_dri(struct DrawInfo *dri, Window root, Colormap cm, int override)
       exit(1);
     }
   if(override)
-    setdriprop(driatom, dritypatom, root, dri);
+    setdriprop(dpy, driatom, dritypatom, root, dri);
 }

@@ -6,9 +6,13 @@
 #include "drawinfo.h"
 #include "screen.h"
 #include "icc.h"
-extern set_sys_palette(void);
-extern set_mwb_palette(void);
-extern void add_toolitem(char *, char *, int);
+extern void set_sys_palette(void);
+extern void set_mwb_palette(void);
+extern void set_schwartz_palette(void);
+extern void set_custom_palette(char *fn);
+extern void add_toolitem(char *, char *, char *, int);
+extern Scrn *openscreen(char *, Window);
+extern void create_module(Scrn *, char *, char *);
 extern char *default_colors[NUMDRIPENS];
 extern char *default_screenfont, *label_font_name;
 extern Display *dpy;
@@ -36,7 +40,7 @@ static int ti_level=0;
 %token <num> ERRORTOKEN LEFTBRACE RIGHTBRACE
 %token <num> YES NO
 %token <num> RIGHT BOTTOM BOTH NONE
-%token <num> MAGICWB SYSTEM
+%token <num> MAGICWB SYSTEM SCHWARTZ
 %token <num> ALWAYS AUTO MANUAL
 %token <num> SEPARATOR
 %token <num> T_DETAILPEN T_BLOCKPEN T_TEXTPEN T_SHINEPEN T_SHADOWPEN
@@ -44,11 +48,11 @@ static int ti_level=0;
 %token <num> T_BARDETAILPEN T_BARBLOCKPEN T_BARTRIMPEN
 %token <num> FASTQUIT SIZEBORDER DEFAULTICON ICONDIR ICONPALETTE SCREENFONT
 %token <num> ICONFONT TOOLITEM FORCEMOVE SCREEN MODULE MODULEPATH
-%token <num> INTERSCREENGAP AUTORAISE
+%token <num> INTERSCREENGAP AUTORAISE FOCUS FOLLOWMOUSE CLICKTOTYPE SLOPPY
 %token <ptr> STRING
 %token <num> NUMBER
 
-%type <num> truth sizeborder dri_pen forcemove_policy
+%type <num> truth sizeborder dri_pen forcemove_policy focuspolicy
 %type <ptr> string
 
 %start amiwmrc
@@ -71,27 +75,32 @@ stmt		: error
 		| ICONDIR string { prefs.icondir = $2; }
 		| ICONPALETTE SYSTEM { set_sys_palette(); }
 		| ICONPALETTE MAGICWB { set_mwb_palette(); }
+		| ICONPALETTE SCHWARTZ { set_schwartz_palette(); }
+		| ICONPALETTE STRING { set_custom_palette($2); }
 		| dri_pen string { default_colors[$1] = $2; }
 		| SCREENFONT string { default_screenfont = $2; }
 		| ICONFONT string { label_font_name = $2; }
 		| FORCEMOVE forcemove_policy { prefs.forcemove = $2; }
 		| SCREEN string { openscreen($2,DefaultRootWindow(dpy)); }
+		| SCREEN NUMBER string { if(($2==DefaultScreen(dpy)||prefs.manage_all) && $2<ScreenCount(dpy)) openscreen($3,RootWindow(dpy,$2)); }
 		| MODULEPATH string { prefs.module_path = $2; }
 		| MODULE string STRING { create_module((front? front->upfront:NULL), $2, $3); }
 		| MODULE string { create_module((front? front->upfront:NULL), $2, NULL); }
 		| INTERSCREENGAP NUMBER { prefs.borderwidth=$2; }
 		| AUTORAISE truth { prefs.autoraise=$2; }
+		| FOCUS focuspolicy { prefs.focus=$2; }
 		;
 
-toolsubmenu	: TOOLITEM string LEFTBRACE { add_toolitem($2, NULL, -1); ti_level=1; }
+toolsubmenu	: TOOLITEM string LEFTBRACE { add_toolitem($2, NULL, NULL, -1); ti_level=1; }
 		;
 
 toolitems	: toolitems toolitem
 		|
 		;
 
-toolitem	: TOOLITEM string string { add_toolitem($2, $3, ti_level); }
-		| TOOLITEM SEPARATOR { add_toolitem(NULL, NULL, ti_level); }
+toolitem	: TOOLITEM string string { add_toolitem($2, $3, NULL, ti_level); }
+		| TOOLITEM string string string { add_toolitem($2, $3, $4, ti_level); }
+		| TOOLITEM SEPARATOR { add_toolitem(NULL, NULL, NULL, ti_level); }
 		;
 
 string		: STRING { $$ = strdup($1); }
@@ -106,6 +115,11 @@ sizeborder	: RIGHT { $$ = Psizeright; }
 		| BOTH { $$ = Psizeright|Psizebottom; }
 		| NONE { $$ = Psizetrans; }
 		| NO { $$ = Psizetrans; }
+		;
+
+focuspolicy	: FOLLOWMOUSE { $$ = FOC_FOLLOWMOUSE; }
+		| SLOPPY { $$ = FOC_SLOPPY; }
+		| CLICKTOTYPE { $$ = FOC_CLICKTOTYPE; }
 		;
 
 dri_pen		: T_DETAILPEN { $$ = DETAILPEN; }
@@ -130,7 +144,7 @@ forcemove_policy : ALWAYS { $$ = FM_ALWAYS; }
 %%
 extern char *progname;
 extern int ParseError;
-yyerror(s) char *s;
+int yyerror(s) char *s;
 {
     fprintf (stderr, "%s: error in input file:  %s\n", progname, s ? s : "");
     ParseError = 1;

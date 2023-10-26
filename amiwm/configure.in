@@ -13,7 +13,7 @@ AC_PATH_XTRA
 
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS(fcntl.h limits.h sys/time.h unistd.h sys/select.h sys/resource.h sys/stat.h termio.h)
+AC_CHECK_HEADERS(fcntl.h limits.h sys/time.h unistd.h sys/select.h sys/resource.h sys/stat.h termio.h X11/extensions/shape.h)
 
 AC_C_CONST
 AC_TYPE_PID_T
@@ -25,7 +25,12 @@ AC_FUNC_ALLOCA
 AC_TYPE_SIGNAL
 AC_FUNC_WAIT3
 AC_CHECK_FUNCS(select strdup waitpid)
+ac_save_LIBS="$LIBS"
+LIBS="$X_LIBS $X_PRE_LIBS -lXext -lXmu -lX11 $X_EXTRA_LIBS $LIBS"
+AC_CHECK_FUNC(XShapeQueryExtension, AC_DEFINE([HAVE_XSHAPE]))
+LIBS="$ac_save_LIBS"
 
+AC_MSG_CHECKING([number of arguments to gettimeofday])
 AC_TRY_LINK([
 #include <stdlib.h>
 #ifdef HAVE_SYS_TIME_H
@@ -35,23 +40,41 @@ AC_TRY_LINK([
   struct timeval tp;
   struct timezone tz;
   gettimeofday(&tp, &tz);
-], AC_DEFINE(BSD_STYLE_GETTIMEOFDAY))
+], AC_DEFINE(BSD_STYLE_GETTIMEOFDAY)
+AC_MSG_RESULT([2]), AC_MSG_RESULT([1]))
 
 AC_CHECK_TYPE(caddr_t, char *)
-AC_EGREP_HEADER([[XPointer[^a-zA-Z_]]], [$]x_includes[$]{x_includes:+/}X11/Xlib.h, , AC_DEFINE(XPointer, caddr_t))
+AC_MSG_CHECKING([for XPointer])
+AC_EGREP_HEADER([XPointer[^a-zA-Z_]], [$]x_includes[$]{x_includes:+/}X11/Xlib.h, AC_MSG_RESULT([yes]), AC_DEFINE(XPointer, caddr_t)
+AC_MSG_RESULT([no]))
 
+AC_MSG_CHECKING([byteorder])
+AC_TRY_RUN([
+int main()
+{
+  union { int i; char c[sizeof(int)]; } v;
+  v.i=0;
+  v.c[0]=1;
+  if(v.i==1) exit(0); else exit(1);
+  return 0;
+}
+], AC_DEFINE([LAME_ENDIAN])
+AC_MSG_RESULT([backward]), AC_MSG_RESULT([normal]), AC_MSG_RESULT([no idea]))
 
 dnl  On SunOS4, libXmu seems to be all in one unit forcing references
 dnl  to libXt into the linking.  Only fix I can think of is to link with
 dnl  libXt too, so that's what we'll do.
 
+AC_MSG_CHECKING([for broken libXmu])
 old_LIBS="$LIBS"
 LIBS="$X_LIBS $X_PRE_LIBS -lXext -lXmu -lX11 $X_EXTRA_LIBS $LIBS"
 AC_TRY_LINK([],[
   extern void XmuCopyISOLatin1Lowered(char *,char *);
   char foo[]="FOO";
   XmuCopyISOLatin1Lowered (foo, foo);
-], XT_LIB_KLUDGE="", XT_LIB_KLUDGE="-lXt")
+], AC_MSG_RESULT([no])
+XT_LIB_KLUDGE="", AC_MSG_RESULT([yes])
+XT_LIB_KLUDGE="-lXt")
 LIBS="$old_LIBS"
 AC_SUBST(XT_LIB_KLUDGE)
 

@@ -1,7 +1,12 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xresource.h>
+#ifdef HAVE_X11_EXTENSIONS_SHAPE_H
+#include <X11/extensions/shape.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "drawinfo.h"
 #include "screen.h"
@@ -10,6 +15,7 @@
 #include "icc.h"
 #include "prefs.h"
 #include "module.h"
+#include "libami.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -19,7 +25,11 @@ extern struct Library *XLibBase;
 #define mx(a,b) ((a)>(b)?(a):(b))
 
 extern Display *dpy;
-extern XContext client_context;
+extern XContext client_context, screen_context;
+extern Cursor wm_curs;
+extern int shape_extn;
+extern void redrawmenubar(Window);
+void reshape_frame(Client *c);
 
 Window creategadget(Client *c, Window p, int x, int y, int w, int h)
 {
@@ -38,15 +48,15 @@ Window creategadget(Client *c, Window p, int x, int y, int w, int h)
 
 void spread_top_gadgets(Client *c)
 {
+  int w=c->pwidth;
+  w-=23; XMoveWindow(dpy, c->depth, w, 0);
   if(c->zoom) {
-    XResizeWindow(dpy, c->drag, c->dragw=mx(4, c->pwidth-23-23-23-19), scr->bh);
-    XMoveWindow(dpy, c->iconify, c->pwidth-23-23-23, 0);
-    XMoveWindow(dpy, c->zoom, c->pwidth-23-23, 0);
-  } else {
-    XResizeWindow(dpy, c->drag, c->dragw=mx(4, c->pwidth-23-23-19), scr->bh);
-    XMoveWindow(dpy, c->iconify, c->pwidth-23-23, 0);
+    w-=23; XMoveWindow(dpy, c->zoom, w, 0);
   }
-  XMoveWindow(dpy, c->depth, c->pwidth-23, 0);
+  if(c->iconify) {
+    w-=23; XMoveWindow(dpy, c->iconify, w, 0);
+  }
+  XResizeWindow(dpy, c->drag, c->dragw=mx(4, w-19), scr->bh);
 }
 
 void setclientborder(Client *c, int old, int new)
@@ -93,13 +103,15 @@ void resizeclientwindow(Client *c, int width, int height)
     if(c->resize)
       XMoveWindow(dpy, c->resize, c->pwidth-18, c->pheight-10);
     XResizeWindow(dpy, c->window, c->pwidth-c->framewidth, c->pheight-c->frameheight);
+    if(c->shaped)
+      reshape_frame(c);
     sendconfig(c);
   }
 }
 
 static int resizable(XSizeHints *xsh)
 {
-  int b, r=0;
+  int r=0;
   if(xsh->width_inc) {
     if(xsh->min_width+xsh->width_inc<=xsh->max_width)
       r++;
@@ -113,6 +125,46 @@ static int resizable(XSizeHints *xsh)
 
 extern unsigned int meta_mask;
 
+void reshape_frame(Client *c)
+{
+  XRectangle r;
+
+#ifdef HAVE_XSHAPE
+  if(!shape_extn)
+    return;
+
+  XShapeCombineShape(dpy, c->parent, ShapeBounding, 4, c->scr->bh, c->window,
+		     ShapeBounding, ShapeSet);
+
+  r.x = 0;
+  r.y = 0;
+  r.width = c->pwidth;
+  r.height = c->scr->bh;
+
+  XShapeCombineRectangles(dpy, c->parent, ShapeBounding,
+			  0, 0, &r, 1, ShapeUnion, Unsorted);
+
+  if(c->proto & Psizeright) {
+    r.x = c->pwidth-18;
+    r.y = 0;
+    r.width = 18;
+    r.height = c->pheight;
+    XShapeCombineRectangles(dpy, c->parent, ShapeBounding,
+			    0, 0, &r, 1, ShapeUnion, Unsorted);
+  }
+  if(c->proto & Psizebottom) {
+    r.x = 0;
+    r.y = c->pheight-10;
+    r.width = c->pwidth;
+    r.height = 10;
+    XShapeCombineRectangles(dpy, c->parent, ShapeBounding,
+			    0, 0, &r, 1, ShapeUnion, Unsorted);
+  }
+#endif
+}
+
+void redrawclient(Client *);
+
 void reparent(Client *c)
 {
   XWindowAttributes attr;
@@ -124,24 +176,49 @@ void reparent(Client *c)
   Client *lc;
   struct mcmd_keygrab *kg;
   extern struct mcmd_keygrab *keygrabs;
+  char **cargv = NULL;
+  int cargc;
 
   if(XGetTransientForHint(dpy, c->window, &leader) &&
      !XFindContext(dpy, leader, client_context, (XPointer *)&lc))
     c->scr = lc->scr;
   else if(XGetTextProperty(dpy, c->window, &screen_prop, amiwm_screen)) {
     do {
-      if((!s->deftitle[screen_prop.nitems])&&!strncmp(s->deftitle,
-						      screen_prop.value))
+      if(s->root == scr->root &&
+	 (!s->deftitle[screen_prop.nitems])&&!strncmp(s->deftitle,
+		      (char *)screen_prop.value, screen_prop.nitems))
 	break;
       s=s->behind;
     } while(s!=scr);
     XFree(screen_prop.value);
     c->scr=s;
+  } else if(XGetCommand(dpy, c->window, &cargv, &cargc)) {
+    XrmDatabase db = (XrmDatabase)NULL;
+    XrmValue value;
+    char *str_type;
+    static XrmOptionDescRec table [] = {
+      {"-xrm", NULL, XrmoptionResArg, (caddr_t) NULL},
+    };
+    XrmParseCommand(&db, table, 1, "amiwm", &cargc, cargv);
+    if(XrmGetResource(db, "amiwm.screen", "Amiwm.Screen",
+		      &str_type, &value) == True &&
+       value.size != 0) {
+      do {
+	if(s->root == scr->root &&
+	   (!s->deftitle[value.size])&&!strncmp(s->deftitle, value.addr,
+						value.size))
+	  break;
+	s=s->behind;
+      } while(s!=scr);
+      c->scr=s;
+    }
+    XrmDestroyDatabase (db);
   }
   scr=c->scr;
   if(c->parent && c->parent != scr->root)
     return;
   getproto(c);
+  getwflags(c);
   XAddToSaveSet(dpy, c->window);
   XGetWindowAttributes(dpy, c->window, &attr);
   c->colormap = attr.colormap;
@@ -155,13 +232,19 @@ void reparent(Client *c)
 			  0, CopyFromParent, InputOutput, CopyFromParent,
 			  CWOverrideRedirect, &attr2);
   XSaveContext(dpy, c->parent, client_context, (XPointer)c);
+  XSaveContext(dpy, c->parent, screen_context, (XPointer)c->scr);
   XSetWindowBackground(dpy, c->parent, scr->dri.dri_Pens[BACKGROUNDPEN]);
   XSetWindowBorderWidth(dpy, c->window, 0);
   XReparentWindow(dpy, c->window, c->parent, 4, scr->bh);
   XSelectInput(dpy, c->window, EnterWindowMask | LeaveWindowMask |
-	       ColormapChangeMask | PropertyChangeMask);
+	       ColormapChangeMask | PropertyChangeMask |
+	       (c->module? SubstructureNotifyMask:0));
+#ifdef HAVE_XSHAPE
+  if(shape_extn)
+    XShapeSelectInput(dpy, c->window, ShapeNotifyMask);
+#endif
   XSelectInput(dpy, c->parent, SubstructureRedirectMask |
-	       SubstructureNotifyMask | ExposureMask |
+	       SubstructureNotifyMask | StructureNotifyMask | ExposureMask |
 	       EnterWindowMask | LeaveWindowMask | ButtonPressMask);
   for(kg=keygrabs; kg; kg=kg->next)
     XGrabKey(dpy, kg->keycode, kg->modifiers, c->window, False, GrabModeAsync,
@@ -169,7 +252,10 @@ void reparent(Client *c)
   cb=(resizable(&c->sizehints)? prefs.sizeborder:0);
   c->close=creategadget(c, c->parent, 0, 0, 19, scr->bh);
   c->drag=creategadget(c, c->parent, 19, 0, 1, 1);
-  c->iconify=creategadget(c, c->parent, 0, 0, 23, scr->bh);
+  if(c->wflags&WF_NOICONIFY)
+    c->iconify=None;
+  else
+    c->iconify=creategadget(c, c->parent, 0, 0, 23, scr->bh);
   if(cb)
     c->zoom=creategadget(c, c->parent, 0, 0, 23, scr->bh);
   c->depth=creategadget(c, c->parent, 0, 0, 23, scr->bh);
@@ -177,9 +263,23 @@ void reparent(Client *c)
   setclientborder(c, 0, cb);
   if(cb)
     c->resize=creategadget(c, c->parent, c->pwidth-18, c->pheight-10, 18, 10);
+  c->shaped = 0;
+#ifdef HAVE_XSHAPE
+  if(shape_extn) {
+    int xbs, ybs, cShaped, xcs, ycs;
+    unsigned int wbs, hbs, wcs, hcs;
+    XShapeQueryExtents (dpy, c->window, &c->shaped, &xbs, &ybs, &wbs, &hbs,
+			&cShaped, &xcs, &ycs, &wcs, &hcs);
+    if(c->shaped)
+      reshape_frame(c);
+  }
+#endif
   XMapSubwindows(dpy, c->parent);
   sendconfig(c);
   setstringprop(c->window, amiwm_screen, scr->deftitle);
+  if(prefs.focus == FOC_CLICKTOTYPE)
+    XGrabButton(dpy, Button1, AnyModifier, c->parent, True,
+		ButtonPressMask, GrabModeSync, GrabModeAsync, None, wm_curs);
 }
 
 void redraw(Client *c, Window w)
@@ -225,7 +325,7 @@ void redraw(Client *c, Window w)
     XSetBackground(dpy, scr->gc, scr->dri.dri_Pens[c->active?FILLPEN:BACKGROUNDPEN]);
     if(c->title.value)
       XDrawImageString(dpy, w, scr->gc, 11, 1+scr->dri.dri_Font->ascent,
-		       c->title.value, c->title.nitems);
+		       (char *)c->title.value, c->title.nitems);
     XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
     XDrawLine(dpy, w, scr->gc, 0, 0, c->dragw-1, 0);
     XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
@@ -322,7 +422,8 @@ void redrawclient(Client *c)
   XSetWindowBackground(dpy, c->parent, bgpix);
   XSetWindowBackground(dpy, c->close, bgpix);
   XSetWindowBackground(dpy, c->drag, bgpix);
-  XSetWindowBackground(dpy, c->iconify, bgpix);
+  if(c->iconify)
+    XSetWindowBackground(dpy, c->iconify, bgpix);
   if(c->zoom)
     XSetWindowBackground(dpy, c->zoom, bgpix);
   XSetWindowBackground(dpy, c->depth, bgpix);
@@ -331,7 +432,8 @@ void redrawclient(Client *c)
   XClearWindow(dpy, c->parent);
   XClearWindow(dpy, c->close);
   XClearWindow(dpy, c->drag);
-  XClearWindow(dpy, c->iconify);
+  if(c->iconify)
+    XClearWindow(dpy, c->iconify);
   if(c->zoom)
     XClearWindow(dpy, c->zoom);
   XClearWindow(dpy, c->depth);
@@ -340,7 +442,8 @@ void redrawclient(Client *c)
   redraw(c, c->parent);
   redraw(c, c->close);
   redraw(c, c->drag);
-  redraw(c, c->iconify);
+  if(c->iconify)
+    redraw(c, c->iconify);
   if(c->zoom)
     redraw(c, c->zoom);
   redraw(c, c->depth);
@@ -385,7 +488,7 @@ void gadgetaborted(Client *c)
 {
   Window w;
   scr=c->scr;
-  if(w=c->clicked) {
+  if((w=c->clicked)) {
     c->clicked=None;
     redraw(c, w);
   }
@@ -421,11 +524,10 @@ void raiselowerclient(Client *c, int place)
 
 void gadgetunclicked(Client *c, XEvent *e)
 {
-  extern void createicon(Client *);
   extern void adjusticon(Icon *);
   Window w;
   scr=c->scr;
-  if(w=c->clicked) {
+  if((w=c->clicked)) {
     c->clicked=None;
     redraw(c, w);
     if(w==c->close) {
@@ -450,10 +552,11 @@ void gadgetunclicked(Client *c, XEvent *e)
       if(!(c->icon))
 	createicon(c);
       XUnmapWindow(dpy, c->parent);
-      XUnmapWindow(dpy, c->window);
+      /*      XUnmapWindow(dpy, c->window); */
       adjusticon(c->icon);
       XMapWindow(dpy, c->icon->window);
-      XMapWindow(dpy, c->icon->labelwin);
+      if(c->icon->labelwidth)
+	XMapWindow(dpy, c->icon->labelwin);
       c->icon->mapped=1;
       setclientstate(c, IconicState);
     }

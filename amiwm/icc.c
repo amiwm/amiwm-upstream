@@ -8,11 +8,11 @@
 extern struct Library *XLibBase;
 #endif
 
-extern void createiconicon(Icon *, XWMHints *);
-extern void destroyiconicon(Icon *);
-extern void setclientstate(Client *, int);
+extern void redraw(Client *, Window);
 
-Atom wm_state, wm_change_state, wm_protocols, wm_delete, wm_take_focus, wm_colormaps, wm_name, wm_normal_hints, wm_hints, wm_icon_name, amiwm_screen;
+Atom wm_state, wm_change_state, wm_protocols, wm_delete, wm_take_focus;
+Atom wm_colormaps, wm_name, wm_normal_hints, wm_hints, wm_icon_name;
+Atom amiwm_screen, swm_vroot, amiwm_wflags, amiwm_appiconmsg, amiwm_appwindowmsg;
 
 extern Display *dpy;
 
@@ -29,23 +29,26 @@ void init_atoms()
   wm_hints = XInternAtom(dpy, "WM_HINTS", False);
   wm_icon_name = XInternAtom(dpy, "WM_ICON_NAME", False);
   amiwm_screen = XInternAtom(dpy, "AMIWM_SCREEN", False);
+  swm_vroot = XInternAtom(dpy, "__SWM_VROOT", False);
+  amiwm_wflags = XInternAtom(dpy, "AMIWM_WFLAGS", False);
+  amiwm_appiconmsg = XInternAtom(dpy, "AMIWM_APPICONMSG", False);
+  amiwm_appwindowmsg = XInternAtom(dpy, "AMIWM_APPWINDOWMSG", False);
 }
 
 void setstringprop(Window w, Atom a, char *str)
 {
     XTextProperty txtp;
 
-    txtp.value=str;
+    txtp.value=(unsigned char *)str;
     txtp.encoding=XA_STRING;
     txtp.format=8;
     txtp.nitems=strlen(str);
     XSetTextProperty(dpy, w, &txtp, a);
 }
 
-void sendcmessage(Window w, Atom a, long x)
+XEvent *mkcmessage(Window w, Atom a, long x)
 {
-  XEvent ev;
-  int status;
+  static XEvent ev;
 
   memset(&ev, 0, sizeof(ev));
   ev.xclient.type = ClientMessage;
@@ -54,11 +57,16 @@ void sendcmessage(Window w, Atom a, long x)
   ev.xclient.format = 32;
   ev.xclient.data.l[0] = x;
   ev.xclient.data.l[1] = CurrentTime;
-  if(!(XSendEvent(dpy, w, False, 0L, &ev)))
+  return &ev;
+}
+
+void sendcmessage(Window w, Atom a, long x)
+{
+  if(!(XSendEvent(dpy, w, False, 0L, mkcmessage(w, a, x))))
     XBell(dpy, 100);
 }
 
-unsigned long _getprop(Window w, Atom a, Atom type, long len, char **p)
+long _getprop(Window w, Atom a, Atom type, long len, char **p)
 {
   Atom real_type;
   int format;
@@ -72,6 +80,20 @@ unsigned long _getprop(Window w, Atom a, Atom type, long len, char **p)
   if (n == 0)
     XFree((void*) *p);
   return n;
+}
+
+void getwflags(Client *c)
+{
+  BITS32 *p;
+  long n;
+
+  c->wflags = 0;
+  if ((n = _getprop(c->window, amiwm_wflags, amiwm_wflags, 1L, (char**)&p)) <= 0)
+    return;
+
+  c->wflags = p[0];
+  
+  XFree((char *) p);
 }
 
 void getproto(Client *c)
@@ -146,10 +168,11 @@ void handle_client_message(Client *c, XClientMessageEvent *xcme)
 	if(!(c->icon))
 	  createicon(c);
 	XUnmapWindow(dpy, c->parent);
-	XUnmapWindow(dpy, c->window);
+	/*	XUnmapWindow(dpy, c->window); */
 	adjusticon(c->icon);
 	XMapWindow(dpy, c->icon->window);
-	XMapWindow(dpy, c->icon->labelwin);
+	if(c->icon->labelwidth)
+	  XMapWindow(dpy, c->icon->labelwin);
 	c->icon->mapped=1;
 	setclientstate(c, IconicState);
       } else ;

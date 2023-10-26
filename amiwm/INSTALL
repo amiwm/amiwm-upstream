@@ -28,6 +28,13 @@ Type 'make' and wait...
 Type 'make install', and the program with its support files will
 be installed in their permanent locations.
 
+5. Install CDE extras (CDE only)
+
+If you're running CDE you may want to do 'make cde-install' as root.
+This will enable a new session type (AmiWM Session) in dtlogin.  This
+has only been tested on Solaris 2.6, so do it at your own risk...  :)
+
+
 If all the steps are successfull, you may then remove the source tree.
 
 

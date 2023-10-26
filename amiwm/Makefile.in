@@ -19,8 +19,9 @@ INSTALL = @INSTALL@
 LN_S = @LN_S@
 RM = -rm -f
 LIBAMI=libami/libami.a
+DT_DIR = /etc/dt
 
-PROGS = amiwm requestchoice executecmd
+PROGS = amiwm requestchoice executecmd ppmtoinfo
 
 MODULES = Background Keyboard
 
@@ -33,10 +34,11 @@ SRCS = main.c screen.c client.c frame.c icc.c \
 		module.c \
 		requestchoice.c executecmd.c kbdmodule.c kbdlexer.c
 
-DISTFILES = README README.modules INSTALL amiwm.1 \
+DISTFILES = README README.modules INSTALL LICENSE amiwm.1 \
 	configure configure.in Makefile.in install-sh smakefile scoptions \
-	*.[chly] system.amiwmrc def_tool.info \
-	Background libami/Makefile.in libami/*.[chly]
+	*.[chly] system.amiwmrc def_tool.info *.map \
+	Background Xresources.amiwm.in Amilogo.?m Xsession*.in Xinitrc.in \
+	amiwm-init libami/Makefile.in libami/*.[chly]
 
 PACKAGENAME = amiwm
 
@@ -56,6 +58,12 @@ menu.o : menu.c
 rc.o : rc.c
 	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
 
+diskobject.o : diskobject.c
+	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
+
+ppmtoinfo.o : ppmtoinfo.c
+	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
+
 gram.h gram.c: gram.y
 	$(YACC) $(YFLAGS) gram.y
 	mv y.tab.c gram.c
@@ -72,7 +80,7 @@ kbdmodule.h kbdmodule.c: kbdmodule.y
 kbdlexer.c : kbdlexer.l
 	$(LEX) -t kbdlexer.l > kbdlexer.c
 
-install : $(PROGS) $(MODULES)
+install : $(PROGS) $(MODULES) Xsession Xsession2 Xinitrc amiwm-init
 	-mkdir -p $(AMIWM_HOME)
 	$(INSTALL) -s requestchoice $(AMIWM_HOME)/requestchoice
 	$(INSTALL) -s executecmd $(AMIWM_HOME)/executecmd
@@ -85,11 +93,27 @@ install : $(PROGS) $(MODULES)
 	done
 	$(INSTALL) -m 644 system.amiwmrc $(AMIWM_HOME)/system.amiwmrc
 	$(INSTALL) -m 644 def_tool.info $(AMIWM_HOME)/def_tool.info
+	$(INSTALL) -m 644 system.map $(AMIWM_HOME)/system.map
+	$(INSTALL) -m 644 magicwb.map $(AMIWM_HOME)/magicwb.map
+	$(INSTALL) -m 644 schwartz.map $(AMIWM_HOME)/schwartz.map
+	$(INSTALL) -m 755 Xsession $(AMIWM_HOME)/Xsession
+	$(INSTALL) -m 755 Xsession2 $(AMIWM_HOME)/Xsession2
+	$(INSTALL) -m 755 Xinitrc $(AMIWM_HOME)/Xinitrc
+	$(INSTALL) -m 755 amiwm-init $(AMIWM_HOME)/amiwm-init
 	$(INSTALL) -s amiwm $(bindir)/amiwm
+	$(INSTALL) -s ppmtoinfo $(bindir)/ppmtoinfo
 	$(RM) $(bindir)/requestchoice
 	$(LN_S) $(AMIWM_HOME)/requestchoice $(bindir)/requestchoice
 	-mkdir -p $(mandir)/man1
 	$(INSTALL) -m 644 amiwm.1 $(mandir)/man1/amiwm.1
+
+cde-install : Xresources.amiwm Amilogo.bm Amilogo.pm
+	-mkdir -p $(DT_DIR)/config/C/Xresources.d
+	$(INSTALL) -m 644 Xresources.amiwm $(DT_DIR)/config/C/Xresources.d/Xresources.amiwm
+	-mkdir -p $(DT_DIR)/appconfig/icons/C
+	$(INSTALL) -m 644 Amilogo.bm $(DT_DIR)/appconfig/icons/C/Amilogo.bm
+	$(INSTALL) -m 644 Amilogo.pm $(DT_DIR)/appconfig/icons/C/Amilogo.pm
+
 
 amiwm : $(OBJS) lib
 	$(CC) -o amiwm $(OBJS) $(LIBS)
@@ -103,6 +127,9 @@ executecmd : executecmd.o lib
 Keyboard : kbdmodule.o kbdlexer.o lib
 	$(CC) -o Keyboard kbdmodule.o kbdlexer.o $(LIBS)
 
+ppmtoinfo : ppmtoinfo.o
+	$(CC) -o ppmtoinfo ppmtoinfo.o -lm
+
 clean :
 	$(RM) core $(PROGS) $(LIBAMI) *.o libami/*.o
 	$(RM) lex.yy.c lex.c y.tab.c y.tab.h gram.h gram.c
@@ -111,11 +138,12 @@ clean :
 
 distclean : clean
 	$(RM) config.status config.cache *~
+	$(RM) Makefile Xresources.amiwm Xsession Xsession2 Xinitrc
 
 spotless : distclean
 
 TAGS:
-	etags *.c
+	etags *.[ch] libami/*.[ch]
 
 patch :
 	mv version.h old_version.h
@@ -125,25 +153,38 @@ patch :
 dist : version.h clean
 	( version=`sed < version.h -e 's/^[^"]*"//' -e 's/"[^"]*$$//'`; \
 	  tarname="$(PACKAGENAME)$$version.tar"; \
-	  mkdir $(PACKAGENAME); \
-	  tar cf - $(DISTFILES) | (cd $(PACKAGENAME)/; tar xf - ); \
+	  mkdir $(PACKAGENAME)$$version; \
+	  tar cf - $(DISTFILES) | (cd $(PACKAGENAME)$$version/; tar xf - ); \
 	  rm -f $$tarname $$tarname.gz; \
-	  tar cf $$tarname $(PACKAGENAME); \
-	  rm -rf $(PACKAGENAME)/; \
+	  tar cf $$tarname $(PACKAGENAME)$$version; \
+	  rm -rf $(PACKAGENAME)$$version; \
 	  gzip $$tarname; \
 	)
 
 $(srcdir)/configure: $(srcdir)/configure.in
 	autoconf $(srcdir)/configure.in > $(srcdir)/configure
 
-$(srcdir)/config.status: $(srcdir)/configure
-	( cd $(srcdir); ./configure )
+config.status: $(srcdir)/configure
+	$(srcdir)/configure
 
-$(srcdir)/Makefile: $(srcdir)/Makefile.in $(srcdir)/config.status
-	( cd $(srcdir); ./config.status )
+Makefile: $(srcdir)/Makefile.in config.status
+	./config.status
 
-$(srcdir)/libami/Makefile: $(srcdir)/libami/Makefile.in $(srcdir)/config.status
-	( cd $(srcdir); ./config.status )
+libami/Makefile: $(srcdir)/libami/Makefile.in config.status
+	./config.status
+
+Xresources.amiwm: $(srcdir)/Xresources.amiwm.in
+	sed -e 's:[@]bindir[@]:$(bindir):g' -e 's:[@]AMIWM_HOME[@]:$(AMIWM_HOME):g' < $(srcdir)/Xresources.amiwm.in > Xresources.amiwm
+
+Xsession: $(srcdir)/Xsession.in config.status
+	sed -e 's:[@]bindir[@]:$(bindir):g' -e 's:[@]AMIWM_HOME[@]:$(AMIWM_HOME):g' < $(srcdir)/Xsession.in > Xsession
+
+Xsession2: $(srcdir)/Xsession2.in config.status
+	sed -e 's:[@]bindir[@]:$(bindir):g' -e 's:[@]AMIWM_HOME[@]:$(AMIWM_HOME):g' < $(srcdir)/Xsession2.in > Xsession2
+
+Xinitrc: $(srcdir)/Xinitrc.in config.status
+	sed -e 's:[@]bindir[@]:$(bindir):g' -e 's:[@]AMIWM_HOME[@]:$(AMIWM_HOME):g' < $(srcdir)/Xinitrc.in > Xinitrc
+
 
 depend:: $(SRCS)
 	-@rm Makefile.bak

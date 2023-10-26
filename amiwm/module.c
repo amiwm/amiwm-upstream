@@ -24,6 +24,7 @@
 
 #include <X11/Xlib.h>
 
+#include "alloc.h"
 #include "drawinfo.h"
 #include "screen.h"
 #include "prefs.h"
@@ -40,13 +41,24 @@ extern Display *dpy;
 extern void add_fd_to_set(int);
 extern void remove_fd_from_set(int);
 
+extern void screentoback();
+extern void raiselowerclient(Client *, int);
+extern void wberror(Scrn *, char *);
+
+extern Icon *createappicon(struct module *, Window, char *,
+			   Pixmap, Pixmap, int, int);
+
+extern struct Item *own_items(struct module *, Scrn *,
+			       int, int, int, struct Item *);
+extern void disown_item_chain(struct module *, struct Item *);
+
 struct module *modules = NULL;
 
 struct mcmd_keygrab *keygrabs = NULL;
 
 static struct mcmd_keygrab *find_keygrab(int keycode, unsigned int modifiers)
 {
-  struct mcmd_keygrab *kg=keygrabs, *last=NULL;
+  struct mcmd_keygrab *kg=keygrabs;
 
   while(kg)
     if(kg->keycode == keycode && kg->modifiers == modifiers)
@@ -76,7 +88,7 @@ int create_keygrab(struct module *m, int keycode, unsigned int modifiers)
   } else return -1;
 }
 
-int delete_keygrab(struct module *m, int id)
+void delete_keygrab(struct module *m, int id)
 {
   struct mcmd_keygrab *kg=keygrabs, *last=NULL;
   Client *c;
@@ -98,7 +110,18 @@ int delete_keygrab(struct module *m, int id)
 
 static void destroy_module(struct module *m)
 {
+  Scrn *s=front;
   delete_keygrab(m, -1);
+  do {
+    Icon *i, *ni;
+    for(i=scr->icons; i; i=ni) {
+      ni=i->next;
+      if(i->module==m)
+	rmicon(i);
+    }
+    s=s->behind;
+  } while(s!=front);
+  disown_item_chain(m, m->menuitems);
   if(m->in_fd>=0) { remove_fd_from_set(m->in_fd); close(m->in_fd); }
   if(m->out_fd>=0) { close(m->out_fd); }
   free(m);
@@ -107,7 +130,7 @@ static void destroy_module(struct module *m)
 static void sieve_modules()
 {
   struct module *m, **p;
-  for(p=&modules; m=*p; )
+  for(p=&modules; (m=*p); )
     if(!m->pid) {
       *p=m->next;
       destroy_module(m);
@@ -161,8 +184,9 @@ void create_module(Scrn *screen, char *module_name, char *module_arg)
 {
   pid_t pid;
   int fds1[2], fds2[2];
-  char fd1num[16], fd2num[16], scrnum[16], destpath[1024], *pathelt;
+  char fd1num[16], fd2num[16], scrnum[16], destpath[1024], *pathelt=NULL;
   struct module *m;
+  char *temppath;
 
 #ifdef HAVE_WAITPID
   reap_children(0);
@@ -172,11 +196,22 @@ void create_module(Scrn *screen, char *module_name, char *module_arg)
 #endif
 #endif
   sieve_modules();
-  for(pathelt=strtok(prefs.module_path, ":"); pathelt;
-      pathelt=strtok(NULL, ":")) {
-    sprintf(destpath, "%s/%s", pathelt, module_name);
-    if(access(destpath, X_OK)>=0)
-      break;
+#ifdef HAVE_ALLOCA
+  temppath = alloca(strlen(prefs.module_path)+2);
+  {
+#else
+  if((temppath = malloc(strlen(prefs.module_path)+2))) {
+#endif
+    strcpy(temppath, prefs.module_path);
+    for(pathelt=strtok(temppath, ":"); pathelt;
+	pathelt=strtok(NULL, ":")) {
+      sprintf(destpath, "%s/%s", pathelt, module_name);
+      if(access(destpath, X_OK)>=0)
+	break;
+    }
+#ifndef HAVE_ALLOCA
+    free(temppath);
+#endif
   }
   if(!pathelt) {
     fprintf(stderr, "%s: no such module\n", module_name);
@@ -281,7 +316,7 @@ int dispatch_event_to_broker(XEvent *e, unsigned long mask, struct module *m)
   return 0;
 }
 
-static int incoming_event(struct module *m, struct mcmd_event *me)
+static void incoming_event(struct module *m, struct mcmd_event *me)
 {
   extern void internal_broker(XEvent *);
 
@@ -289,9 +324,18 @@ static int incoming_event(struct module *m, struct mcmd_event *me)
     internal_broker(&me->event);
 }
 
+void mod_menuselect(struct module *m, int menu, int item, int subitem)
+{
+  fprintf(stderr, "Nu valde någon minsann menyitem %d:%d:%d.\n"
+	  "Man kanske skulle berätta detta för modul %d\n?",
+	  menu, item, subitem, (int)m->pid);
+}
+
 static void handle_module_cmd(struct module *m, char *data, int data_len)
 {
   extern Scrn *getscreen(Window);
+  extern unsigned long iconcolor[];
+  extern int iconcolormask;
   XID id=m->mcmd.id;
   Client *c;
 
@@ -353,13 +397,69 @@ static void handle_module_cmd(struct module *m, char *data, int data_len)
       if(!(c->icon))
 	createicon(c);
       XUnmapWindow(dpy, c->parent);
-      XUnmapWindow(dpy, c->window);
+      /* XUnmapWindow(dpy, c->window); */
       adjusticon(c->icon);
       XMapWindow(dpy, c->icon->window);
-      XMapWindow(dpy, c->icon->labelwin);
+      if(c->icon->labelwidth)
+	XMapWindow(dpy, c->icon->labelwin);
       c->icon->mapped=1;
       setclientstate(c, IconicState);
       reply_module(m, NULL, 0);
+    } else
+      reply_module(m, NULL, -1);
+    break;
+  case MCMD_CREATEAPPICON:
+    if(data_len>=sizeof(struct NewAppIcon)) {
+      struct NewAppIcon *nai=(struct NewAppIcon *)data;
+      Window w=None;
+      Icon *i=createappicon(m, id, nai->name,
+			    nai->pm1, nai->pm2, nai->x, nai->y);
+      if(i!=NULL) w=i->window;
+      reply_module(m, (char *)&w, sizeof(w));
+    } else
+      reply_module(m, NULL, -1);
+    break;
+  case MCMD_ERRORMSG:
+    if(data_len>0) {
+      extern char *free_screentitle;
+      if(free_screentitle) free(free_screentitle);
+      free_screentitle=malloc(data_len+1);
+      if(free_screentitle==NULL)
+	reply_module(m, NULL, -1);
+      else {
+	scr=getscreen(id);
+	memcpy(free_screentitle, data, data_len);
+	free_screentitle[data_len]='\0';
+	wberror(scr, free_screentitle);
+	reply_module(m, NULL, 0);
+      }
+    } else
+      reply_module(m, NULL, -1);
+    break;
+  case MCMD_SETAPPWINDOW:
+    if(!XFindContext(dpy, id, client_context, (XPointer*)&c)) {
+      c->module=m;
+      reply_module(m, NULL, 0);
+    } else
+      reply_module(m, NULL, -1);
+    break;
+  case MCMD_GETICONDIR:
+    reply_module(m, prefs.icondir, strlen(prefs.icondir)+1);
+    break;
+  case MCMD_GETICONPALETTE:
+    reply_module(m, (void *)iconcolor,
+		 (iconcolormask+1)*sizeof(unsigned long));
+    break;
+  case MCMD_MANAGEMENU:
+    if(data_len>=sizeof(int[3])) {
+      struct Item *i;
+      scr=getscreen(id);
+      if((i=own_items(m, scr, ((int*)data)[0], ((int*)data)[1],
+		      ((int*)data)[3], m->menuitems))) {
+	m->menuitems = i;
+	reply_module(m, NULL, 0);
+      } else
+	reply_module(m, NULL, -1);
     } else
       reply_module(m, NULL, -1);
     break;

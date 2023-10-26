@@ -1,7 +1,7 @@
 .\" @(#)amiwm.1
 '\"macro stdmacro
 .nr X
-.TH amiwm 1 "2 Aug 1996"
+.TH amiwm 1 "14 Mar 1998"
 .SH NAME
 amiwm \- Amiga Workbench-like X Window Manager
 .SH SYNOPSIS
@@ -41,10 +41,12 @@ Specifies a directory in which amiwm will look for icons.
 Gives the filename of the .info file to use as a default icon.
 It is relative to the IconDir.
 
-.SH IconPalette {system|magicwb}
+.SH IconPalette {system|magicwb|schwartz|\f1\*(lq\f3filename"}
 
 Selects either the Workbench® default palette, or the MagicWorkbench
-standard palette for use with icons.
+standard palette for use with icons.  The third option is a 16 color
+palette used on the "Eric Schwartz Productions CD Archive".  Alternatively,
+the filename of a PPM file representing the palette to use can be used.
 
 .SH ScreenFont \f1\*(lq\f3fontname"
 
@@ -60,10 +62,12 @@ Selects a font for icontitles.
 
 Modifies the colour scheme for the window manager.
 
-.SH ToolItem \f1\*(lq\f3name" \f1\*(lq\f3command"
+.SH ToolItem \f1\*(lq\f3name" \f1\*(lq\f3command" \f1\*(lq\f3hotkey"
 
 Adds an item in the Tools menu with the specified name, which executes
-the command when selected.
+the command when selected.  A string containing a single uppercase letter
+may be specified as the third argument, making this letter a hotkey for the
+item.
 
 .SH ToolItem Separator
 
@@ -74,11 +78,12 @@ Inserts a separator bar in the Tools menu.
 Create ToolItem:s in a submenu with the specified name.  It is not legal
 to create a submenu inside another submenu.
 
-.SH Screen \f1\*(lq\f3name"
+.SH Screen [<number>] \f1\*(lq\f3name"
 
 Create a new screen with the specified name.  It will be placed below all
 earlier created screens.  To move a window between two screens, iconify it
-and drag the icon over to the other screen.
+and drag the icon over to the other screen.  If the second argument is given,
+this screen is placed on the corresponding X screen.
 
 .SH ModulePath \f1\*(lq\f3path(:path...)"
  
@@ -104,6 +109,16 @@ between screens when they are dragged.
 Selects whether windows will automatically be moved to the front when
 they are activated.
 
+.SH Focus {followmouse|sloppy|clicktotype}
+
+Sets the policy by which windows are given focus.  Followmouse is the
+default and means that the window that contains the mouse pointer will
+have focus.  Sloppy means that the window that had focus last will keep
+it when the pointer is not over a window.  ClickToType is the original AmigaOS
+policy in which you have to explicitly give focus to windows by clicking
+in them.
+
+
 .SH TROUBLESHOOTING
 
 The most likely reason for amiwm to crash is if it
@@ -119,15 +134,10 @@ $HOME/.amiwmrc
 $AMIWM_HOME/system.amiwmrc
 .fi
 
-.SH BUGS
-There is no way to explicitly state which screen new applications should
-open on.
-
 .SH COPYRIGHT NOTICES
 This program is distributed as freeware. The copyright remains with
-the author.
-Amiga and Workbench are registered trademarks of Amiga Technologies
-GMBH.
+the author.  See the file LICENSE for more information.
+Amiga and Workbench are registered trademarks of AMIGA International Inc.
 
 .SH AUTHOR
 Marcus Comstedt,

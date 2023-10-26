@@ -25,6 +25,7 @@ static void lookup_meta()
 {
   int i, j, k;
   KeySym *kp;
+  unsigned int alt_mask = 0;
 
   meta_mask = switch_mask = 0;
   for(i=3; i<8; i++)
@@ -39,7 +40,13 @@ static void lookup_meta()
 	case XK_Mode_switch:
 	  switch_mask|=1<<i;
 	  break;
+	case XK_Alt_L:
+	case XK_Alt_R:
+	  alt_mask|=1<<i;
+	  break;
 	}
+  if(meta_mask == 0)
+    meta_mask = alt_mask;
 }
 
 static void lookup_hotkey(struct hotkey *hk)

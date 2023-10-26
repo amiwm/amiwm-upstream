@@ -15,6 +15,7 @@
 #include "drawinfo.h"
 #include "prefs.h"
 #include "screen.h"
+#include "libami.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -24,9 +25,9 @@ extern struct Library *XLibBase;
 extern Display *dpy;
 extern char *progname;
 
-unsigned long iconcolor[8];
-
-char *iconcolorname[8];
+unsigned long iconcolor[256];
+char *iconcolorname[256];
+int iconcolormask;
 
 static char *sysiconcolorname[]={
   "#aaaaaa", "#000000", "#ffffff", "#6688bb",
@@ -38,179 +39,23 @@ static char *magicwbcolorname[]={
   "#999999", "#bbbbbb", "#bbaa99", "#ffbbaa"  
 };
 
-
-#define	WBDISK		1
-#define	WBDRAWER	2
-#define	WBTOOL		3
-#define	WBPROJECT	4
-#define	WBGARBAGE	5
-#define	WBDEVICE	6
-#define	WBKICK		7
-#define WBAPPICON	8
-
-struct Gadget
-{
-  struct Gadget *NextGadget;
-  INT16 LeftEdge, TopEdge, Width, Height;
-  BITS16 Flags, Activation, GadgetType;
-/*
-  void *GadgetRender, *SelectRender;
-  struct IntuiText *GadgetText;
-  INT32 MutualExclude;
-  void *SpecialInfo;
-  CARD16 GadgetID;
-  void *UserData;
-*/
-  BITS16 foo[13];
+static char *schwartziconcolorname[]={
+  "#aaa0aa", "#000000", "#ffffff", "#5b78f5",
+  "#999099", "#bbb0bb", "#bbaa99", "#ffbbaa",
+  "#d922f1", "#915a46", "#3e3e41", "#6e6973",
+  "#ff1919", "#ffff00", "#727d92", "#00c800"
 };
 
-struct Image
+Pixmap image_to_pixmap_scr(Scrn *scr, struct Image *im, int width, int height)
 {
-  INT16 LeftEdge, TopEdge, Width, Height, Depth;
-/*
-  CARD16 *ImageData;
-*/
-  BITS16 foo[2];
-  CARD8 PlanePick, PlaneOnOff;
-  struct Image *NextImage;
-};
-
-struct DiskObject {
-  CARD16 do_Magic, do_Version;
-  struct Gadget do_Gadget;
-  CARD8 do_Type, pad[1];
-/*
-  char *do_DefaultTool, **do_ToolTypes;
-  INT32 do_CurrentX, do_CurrentY;
-  struct DrawerData *do_DrawerData;
-  char *do_ToolWindow;
-  INT32 do_StackSize;
-*/
-  BITS16 foo[14];
-};
-
-#define WB_DISKMAGIC	0xe310
-#define WB_DISKVERSION	1
-#define WB_DISKREVISION	1
-#define WB_DISKREVISIONMASK	255
-
-#define NO_ICON_POSITION	(0x80000000)
-
-
-static INT16 swap16(INT16 x)
-{
-  return ((x&0xff)<<8)|((x&0xff00)>>8);
-}
-
-static Pixmap int_load_do(const char *filename, int sel)
-{
-  struct DiskObject dobj;
-  struct Image im;
-  Pixmap pm;
-  int fd, bitmap_pad, x, y, lame_byteorder=0;
-  char *foo_data;
-  int bpr, imgsz;
-
-  if((fd=open(filename, O_RDONLY))>=0) {
-    if(sizeof(dobj)==read(fd, &dobj, sizeof(dobj)) &&
-       ((dobj.do_Magic==WB_DISKMAGIC && dobj.do_Version==WB_DISKVERSION)
-	||(((CARD16)swap16((INT16)dobj.do_Magic))==WB_DISKMAGIC &&
-	   ((CARD16)swap16((INT16)dobj.do_Version))==WB_DISKVERSION &&
-	   (lame_byteorder=1))) &&
-       lseek(fd, ((dobj.do_Type==WBDISK||dobj.do_Type==WBDRAWER||
-		   dobj.do_Type==WBGARBAGE)?(0x4e)+0x38:0x4e), SEEK_SET)>=0) {
-      if(lame_byteorder) {
-	dobj.do_Gadget.Width=swap16(dobj.do_Gadget.Width);
-	dobj.do_Gadget.Height=swap16(dobj.do_Gadget.Height);
-      }
-    for(;;) {
-      if(sizeof(im)!=read(fd, &im, sizeof(im))) {
-	close(fd);
-	return None;
-      }
-      if(lame_byteorder) {
-	im.LeftEdge=swap16(im.LeftEdge);
-	im.TopEdge=swap16(im.TopEdge);
-	im.Width=swap16(im.Width);
-	im.Height=swap16(im.Height);
-	im.Depth=swap16(im.Depth);
-      }
-      bpr=2*((im.Width+15)>>4); imgsz=bpr*im.Height*im.Depth;
-      if(!(sel--)) break;
-      lseek(fd, imgsz, SEEK_CUR);
-    }
-      { 
-	XImage *ximg;
-#ifndef HAVE_ALLOCA
-	unsigned char *img=malloc(imgsz);
-	if(!img) {
-	  close(fd);
-	  return None;
-	}
-#else
-	unsigned char *img=alloca(imgsz);
-#endif
-	if(imgsz!=read(fd, img, imgsz)) {
-	  close(fd);
-#ifndef HAVE_ALLOCA
-	  free(img);
-#endif
-	  return None;
-	}
-	close(fd);
-	if (scr->depth > 16)
-	  bitmap_pad = 32;
-	else if (scr->depth > 8)
-	  bitmap_pad = 16;
-	else
-	  bitmap_pad = 8;
-	ximg=XCreateImage(dpy, scr->visual, scr->depth, ZPixmap, 0, NULL,
-			  im.Width, im.Height, bitmap_pad, 0);
-#ifndef HAVE_ALLOCA
-	if(!(ximg->data = malloc(ximg->bytes_per_line * im.Height))) {
-	  XDestroyImage(ximg);
-	  free(img);
-	  return None;
-	}
-#else
-	foo_data = alloca(ximg->bytes_per_line * im.Height);
-	ximg->data = foo_data;
-#endif
-	for(y=0; y<im.Height; y++)
-	  for(x=0; x<im.Width; x++) {
-	    unsigned char b=1, v=im.PlaneOnOff&~(im.PlanePick);
-	    INT16 p=0;
-	    while(p<im.Depth && b) {
-	      if(b&im.PlanePick)
-		if(img[(p++*im.Height+y)*bpr+(x>>3)]&(128>>(x&7)))
-		  v|=b;
-	      b<<=1;
-	    }
-	    XPutPixel(ximg, x, y, iconcolor[v&7]);
-	  }
-	pm=XCreatePixmap(dpy, scr->back, dobj.do_Gadget.Width, dobj.do_Gadget.Height,
-			 scr->depth);
-	XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[BACKGROUNDPEN]);
-	XFillRectangle(dpy, pm, scr->gc, 0, 0,
-		       dobj.do_Gadget.Width, dobj.do_Gadget.Height);
-	XPutImage(dpy, pm, scr->gc, ximg, 0, 0, im.LeftEdge, im.TopEdge,
-		  im.Width, im.Height);
-#ifndef HAVE_ALLOCA
-	free(ximg->data);
-	free(img);
-#endif
-	ximg->data=NULL;
-	XDestroyImage(ximg);
-	return pm;
-      }
-    }
-    close(fd);
-  }
-  return None;
+  return image_to_pixmap(dpy, scr->back, scr->gc,
+			 scr->dri.dri_Pens[BACKGROUNDPEN],
+			 iconcolor, iconcolormask, im, width, height);
 }
 
 void load_do(const char *filename, Pixmap *p1, Pixmap *p2)
 {
+  struct DiskObject *dobj;
 #ifdef AMIGAOS
   char fn[256];
   strncpy(fn, prefs.icondir, sizeof(fn)-1);
@@ -225,8 +70,14 @@ void load_do(const char *filename, Pixmap *p1, Pixmap *p2)
 #endif
   sprintf(fn, "%s/%s", prefs.icondir, filename);
 #endif
-  *p1=int_load_do(fn,0);
-  *p2=int_load_do(fn,1);
+  fn[strlen(fn)-5]=0;
+  if((dobj=GetDiskObject(fn))) {
+    *p1=image_to_pixmap_scr(scr, (struct Image *)dobj->do_Gadget.GadgetRender,
+			    dobj->do_Gadget.Width, dobj->do_Gadget.Height);
+    *p2=image_to_pixmap_scr(scr, (struct Image *)dobj->do_Gadget.SelectRender,
+			    dobj->do_Gadget.Width, dobj->do_Gadget.Height);
+    FreeDiskObject(dobj);
+  } else *p1=*p2=None;
 }
 
 void init_iconpalette()
@@ -236,7 +87,7 @@ void init_iconpalette()
   char *name;
   int i;
 
-  for(i=0; i<8; i++) {
+  for(i=0; i<=iconcolormask; i++) {
     if(!myXAllocNamedColor(dpy, scr->cmap, name = iconcolorname[i], &scrp, &xact)) {
       fprintf(stderr, "%s: cannot allocate color %s\n", progname, name);
       exit(1);
@@ -247,10 +98,101 @@ void init_iconpalette()
 
 void set_mwb_palette()
 {
-  memcpy(iconcolorname, magicwbcolorname, sizeof(iconcolorname));
+  iconcolormask=7;
+  memcpy(iconcolorname, magicwbcolorname, sizeof(magicwbcolorname));
 }
 
 void set_sys_palette()
 {
-  memcpy(iconcolorname, sysiconcolorname, sizeof(iconcolorname));
+  iconcolormask=7;
+  memcpy(iconcolorname, sysiconcolorname, sizeof(sysiconcolorname));
+}
+
+void set_schwartz_palette()
+{
+  iconcolormask=15;
+  memcpy(iconcolorname, schwartziconcolorname, sizeof(schwartziconcolorname));
+}
+
+#ifndef HAVE_STRDUP
+/* defined in gram.y */
+extern char *strdup(char *);
+#endif
+
+static int custom_palette_from_file(char *fn, int ignorenofile)
+{
+  FILE *file;
+  int rows, cols, pixels, pixel;
+  int format, mv;
+
+  if(!(file=fopen(fn, "r"))) {
+    if(!ignorenofile)
+      perror(fn);
+    return 0;
+  }
+
+  if(4!=fscanf(file, "P%d %d %d %d", &format, &cols, &rows, &mv) ||
+     (format!=3 && format!=6)) {
+    fprintf(stderr, "%s: bad magic number - not a ppm file\n", fn);
+    fclose(file);
+    return 0;
+  }
+  if(format==6)
+    getc(file);
+  pixels = rows*cols;
+  if(pixels>256)
+    pixels = 256;
+  for(pixel=0; pixel<pixels; ++pixel) {
+    unsigned int r, g, b;
+    char nam[16];
+    if(format==3)
+      fscanf(file, "%u %u %u", &r, &g, &b);
+    else {
+      r = getc(file);
+      g = getc(file);
+      b = getc(file);
+    }
+    if(mv==255)
+      sprintf(nam, "#%02x%02x%02x", r&0xff, g&0xff, b&0xff);
+    else if(mv==65536)
+      sprintf(nam, "#%04x%04x%04x", r&0xffff, g&0xffff, b&0xffff);
+    else if(mv<255)
+      sprintf(nam, "#%02x%02x%02x", (r*0xff/mv)&0xff,
+	      (g*0xff/mv)&0xff, (b*0xff/mv)&0xff);
+    else
+      sprintf(nam, "#%04x%04x%04x", (r*0xffff/mv)&0xffff,
+	      (g*0xffff/mv)&0xffff, (b*0xffff/mv)&0xffff);
+    iconcolorname[pixel] = strdup(nam);
+  }
+  fclose(file);
+  while(pixels&(pixels-1))
+    iconcolorname[pixels++]="black";
+  iconcolormask=pixels-1;
+  return 1;
+}
+
+void set_custom_palette(char *fn)
+{
+  if(*fn!='/') {
+    char *fn2;
+    int r;
+#ifdef HAVE_ALLOCA
+    fn2 = alloca(strlen(fn)+strlen(AMIWM_HOME)+2);
+#else
+    fn2 = malloc(strlen(fn)+strlen(AMIWM_HOME)+2);
+#endif
+    sprintf(fn2, "%s/%s", AMIWM_HOME, fn);
+    r=custom_palette_from_file(fn2, 1);
+#ifndef HAVE_ALLOCA
+    free(fn2);
+#endif
+    if(r)
+      return;
+  }
+  custom_palette_from_file(fn, 0);
+}
+
+char *get_current_icondir()
+{
+  return prefs.icondir;
 }

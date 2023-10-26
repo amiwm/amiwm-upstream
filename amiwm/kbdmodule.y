@@ -38,7 +38,7 @@ bindings		: bindings binding
 			|
 			;
 
-binding			: modifiers KEYSYM COLON whereabouts COLON command { cx_hotkey($2, $1.mods, $1.meta, $4, docmd, $6); }
+binding			: modifiers KEYSYM COLON whereabouts COLON command { cx_hotkey($2, $1.mods, $1.meta, $4, docmd, (void*)$6); }
 			;
 
 modifiers		: modifiers MODIFIER { $$.mods=$1.mods|$2; $$.meta=$1.meta; }
@@ -69,7 +69,7 @@ int main(int argc, char *argv[])
   progname=argv[0];
   if(arg) {
     extern unsigned char *inptr;
-    inptr=arg;
+    inptr=(unsigned char *)arg;
     yyparse();
     md_main_loop();
   }

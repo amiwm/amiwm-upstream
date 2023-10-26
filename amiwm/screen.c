@@ -7,23 +7,63 @@
 #include "icon.h"
 #include "client.h"
 #include "prefs.h"
+#include "icc.h"
 
 extern Display *dpy;
 extern Cursor wm_curs;
 extern XFontStruct *labelfont;
 extern char *progname;
-extern XContext screen_context;
+extern XContext screen_context, client_context, vroot_context;
 
 extern void createmenubar();
+extern void reparent(Client *);
 
 Scrn *front = NULL, *scr = NULL;
 
+static Scrn *getvroot(Window root)
+{
+  Scrn *s;
+  if(!XFindContext(dpy, root, vroot_context, (XPointer *)&s))
+    return s;
+  return NULL;
+}
+
+static void setvroot(Window root, Scrn *s)
+{
+  XSaveContext(dpy, root, vroot_context, (XPointer)s);
+}
+
+void setvirtualroot(Scrn *s)
+{
+  if(s) {
+    Scrn *old_vroot = getvroot(s->root);
+
+    if(s==old_vroot) return;
+    if(old_vroot)
+      XDeleteProperty(dpy, old_vroot->back, swm_vroot);
+    setvroot(s->root, s);
+    XChangeProperty(dpy, s->back, swm_vroot, XA_WINDOW, 32, PropModeReplace,
+		    (unsigned char *)&(s->back), 1);
+  }
+}
+
+Scrn *getscreenbyroot(Window w);
+
 void screentoback(void)
 {
+  Scrn *f;
   if((!scr)||(scr->back==scr->root)) return;
   if(scr==front) {
     XLowerWindow(dpy, scr->back);
     front=scr->behind;
+  } else if(scr==getscreenbyroot(scr->root)) {
+    XLowerWindow(dpy, scr->back);
+    scr->upfront->behind=scr->behind;
+    scr->behind->upfront=scr->upfront;
+    scr->upfront=front->upfront;
+    scr->behind=front;
+    front->upfront->behind=scr;
+    front->upfront=scr;
   } else if(scr->behind==front) {
     XRaiseWindow(dpy, scr->back);
     front=scr;
@@ -37,7 +77,10 @@ void screentoback(void)
     front->upfront=scr;
     front=scr;
   }
-  init_dri(&front->dri, front->root, front->cmap, True);
+  if((f = getscreenbyroot(scr->root))) {
+    init_dri(&f->dri, dpy, f->root, f->cmap, True);
+    setvirtualroot(f);
+  }
 }
 
 void assimilate(Window w, int x, int y)
@@ -67,6 +110,8 @@ static void scanwins()
     for (i = 0; i < nwins; i++)
       XGetWindowAttributes(dpy, wins[i], pattr+i);
     for (i = 0; i < nwins; i++) {
+      if (!XFindContext(dpy, wins[i], client_context, &dummy))
+	continue;
       if (pattr[i].override_redirect) {
 	if(scr->back!=scr->root && XFindContext(dpy, wins[i], screen_context, &dummy))
 	  assimilate(wins[i], pattr[i].x, pattr[i].y);
@@ -82,7 +127,8 @@ static void scanwins()
 	    createicon(c);
 	    adjusticon(c->icon);
 	    XMapWindow(dpy, c->icon->window);
-	    XMapWindow(dpy, c->icon->labelwin);
+	    if(c->icon->labelwidth)
+	      XMapWindow(dpy, c->icon->labelwin);
 	    c->icon->mapped=1;
 	  } else if(c->state==NormalState)
 	    XMapRaised(dpy, c->parent);
@@ -117,8 +163,9 @@ Scrn *openscreen(char *deftitle, Window root)
   s->cmap = attr.colormap;
   s->depth = attr.depth;
   s->visual = attr.visual;
+  s->number = XScreenNumberOfScreen(attr.screen);
 
-  init_dri(&s->dri, s->root, s->cmap, True);
+  init_dri(&s->dri, dpy, s->root, s->cmap, True);
 
   swa.background_pixel = s->dri.dri_Pens[BACKGROUNDPEN];
   swa.override_redirect = True;
@@ -183,8 +230,6 @@ Scrn *openscreen(char *deftitle, Window root)
 
 void realizescreens(void)
 {
-  Scrn *s2;
-
   scr = front;
 
   do {
@@ -213,8 +258,14 @@ void realizescreens(void)
 
     scr=scr->behind;
   } while(scr!=front);
-  scanwins();
-  init_dri(&scr->dri, scr->root, scr->cmap, True);
+  do {  
+    scanwins();
+    if(!getvroot(scr->root)) {
+      init_dri(&scr->dri, dpy, scr->root, scr->cmap, True);
+      setvirtualroot(scr);
+    }
+    scr=scr->behind;
+  } while(scr!=front);
 }
 
 Scrn *getscreen(Window w)
@@ -240,17 +291,3 @@ Scrn *getscreenbyroot(Window w)
     } while(s!=front);
   return NULL;
 }
-
-/*
-Scrn *getscreenbymenubar(Window w)
-{
-  Scrn *s=front;
-  if(s)
-    do {
-      if(s->menubardepth == w)
-	return s;
-      s=s->behind;
-    } while(s!=front);
-  return NULL;
-}
-*/

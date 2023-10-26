@@ -278,7 +278,7 @@ int main(int argc, char *argv[])
   }
   root = RootWindow(dpy, DefaultScreen(dpy));
   XGetWindowAttributes(dpy, root, &attr);
-  init_dri(&dri, root, attr.colormap, False);
+  init_dri(&dri, dpy, root, attr.colormap, False);
 
   strgadw=VISIBLE_CMD_CHARS*dri.dri_Font->max_bounds.width+12;
   strgadh=(fh=dri.dri_Font->ascent+dri.dri_Font->descent)+6;

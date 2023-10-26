@@ -18,10 +18,12 @@ INSTALL = @INSTALL@
 LN_S = @LN_S@
 
 OBJS  = drawinfo.o module.o broker.o eventdispatcher.o mdscreen.o \
-	kbdsupport.o hotkey.o lists.o readargs.o error.o
+	mdicon.o mdwindow.o kbdsupport.o hotkey.o \
+	lists.o readargs.o iconlib.o iconutil.o error.o strutil.o
 
 SRCS = drawinfo.c module.c broker.c eventdispatcher.c mdscreen.c \
-	kbdsupport.c hotkey.c lists.c readargs.c error.c
+	mdicon.c mdwindow.c kbdsupport.c hotkey.c \
+	lists.c readargs.c iconlib.c iconutil.c error.c strutil.c
 
 all : libami.a
 
@@ -31,9 +33,6 @@ libami.a : $(OBJS)
 
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) $<
-
-TAGS:
-	etags *.c
 
 depend: $(SRCS)
 	-@rm Makefile.bak

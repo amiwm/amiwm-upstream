@@ -46,4 +46,7 @@ struct DrawInfo
 #define NUMDRIPENS       (0x000C)
 
 #define DRAWINFO_H
+
+extern void init_dri(struct DrawInfo *, Display *, Window, Colormap, int);
+
 #endif

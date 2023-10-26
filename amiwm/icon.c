@@ -15,9 +15,13 @@
 extern struct Library *XLibBase;
 #endif
 
+#define NO_ICON_POSITION	(0x80000000)
+
 extern Display *dpy;
 extern char *progname;
-extern XContext icon_context;
+extern XContext icon_context, client_context, screen_context;
+
+extern void init_iconpalette();
 
 XFontStruct *labelfont;
 
@@ -53,10 +57,9 @@ void redrawicon(Icon *i, Window w)
     XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[i->selected? SHINEPEN:SHADOWPEN]);
     XDrawLine(dpy, w, scr->gc, 1, i->height-1, i->width-1, i->height-1);
     XDrawLine(dpy, w, scr->gc, i->width-1, 1, i->width-1, i->height-1);
-  } else if(w==i->labelwin) {
+  } else if(w==i->labelwin && i->label.value) {
     XDrawImageString(dpy, w, scr->icongc, 0, labelfont->ascent,
-		     (i->label.value? (char *)i->label.value:"()"),
-		     i->label.nitems);
+		     (char *)i->label.value, i->label.nitems);
   }
 }
 
@@ -66,7 +69,8 @@ void selecticon(Icon *i)
     i->nextselected = i->scr->firstselected;
     i->scr->firstselected = i;
     i->selected = 1;
-    redrawicon(i, i->window);
+    if(i->mapped)
+      redrawicon(i, i->window);
   }
 }
 
@@ -82,7 +86,8 @@ void deselecticon(Icon *i)
     }
   i->nextselected = NULL;
   i->selected=0;
-  redrawicon(i, i->window);
+  if(i->mapped)
+    redrawicon(i, i->window);
 }
 
 void deselect_all_icons(Scrn *scr)
@@ -94,7 +99,6 @@ void deselect_all_icons(Scrn *scr)
 void select_all_icons(Scrn *scr)
 {
   Icon *i;
-  XWindowAttributes attr;
   for(i=scr->icons; i; i=i->next)
     if(i->window && i->mapped)
       selecticon(i);
@@ -157,22 +161,27 @@ void createdefaulticons()
 
 void adjusticon(Icon *i)
 {
-  Window r,p,*children,w=i->window,lw=i->labelwin;
-  unsigned int nchildren;
+  Window w=i->window,lw=i->labelwin;
   int nx, ny;
-  Window ws[3];
+  Window rt, ws[3];
   Icon *i2;
+  int xx, yy;
+  unsigned int maxx, maxy, bw, dd;
 
   scr=i->scr;
+  maxx=scr->width; maxy=scr->height;
+  if(i->parent!=scr->back)
+    XGetGeometry(dpy, i->parent, &rt, &xx, &yy, &maxx, &maxy, &bw, &dd);
   nx=i->x; ny=i->y;
   for(i2=scr->icons; i2; i2=i2->next)
-    if(i2!=i && i2->mapped && nx<i2->x+i2->width && nx+i->width>i2->x &&
+    if(i2->parent==i->parent && i2!=i && i2->mapped &&
+       nx<i2->x+i2->width && nx+i->width>i2->x &&
        ny<i2->y+i2->height+scr->lh+2 && ny+i->height+scr->lh+2>i2->y) {
       ny=i2->y+i2->height+scr->lh+4;
-      if(ny+i->height+scr->lh+1>scr->height) {
+      if(ny+i->height+scr->lh+1>maxy) {
 	nx=i2->x+i2->width+5;
-	if(nx+i->width>scr->width) {
-	  ny=scr->height;
+	if(i->parent==scr->back && nx+i->width>maxx) {
+	  ny=maxy;
 	  break;
 	} else
 	  ny=scr->bh+4;
@@ -181,18 +190,25 @@ void adjusticon(Icon *i)
       continue;
     }
 
-  if(nx+i->width>scr->width)
-    nx=scr->width-i->width;
-  if(ny+i->height>scr->height)
-    ny=scr->height-i->height;
-  if(nx<0) nx=0;
-  if(ny<scr->bh) ny=scr->bh;
+  if(i->parent==scr->back) {
+    if(nx+i->width>maxx)
+      nx=maxx-i->width;
+    if(ny+i->height>maxy)
+      ny=maxy-i->height;
+    if(nx<0) nx=0;
+    if(ny<scr->bh) ny=scr->bh;
+  }
   if(nx!=i->x || ny!=i->y)
     XMoveWindow(dpy, w, i->x=nx, i->y=ny);
-  ws[0]=scr->menubar;
-  ws[1]=w;
-  ws[2]=lw;
-  XRestackWindows(dpy, ws, 3);
+  if(i->parent==scr->back) {
+    ws[0]=scr->menubar;
+    ws[1]=w;
+    ws[2]=lw;
+    XRestackWindows(dpy, ws, 3);
+  } else {
+    XRaiseWindow(dpy, lw);
+    XRaiseWindow(dpy, w);
+  }
   XMoveWindow(dpy, lw, nx+(i->width>>1)-(i->labelwidth>>1),
 	      ny+i->height+1);
 }
@@ -221,7 +237,7 @@ void createiconicon(Icon *i, XWMHints *wmhints)
     if((wmhints->flags&IconWindowHint) && wmhints->icon_window) {
       Window r;
       unsigned int b, d;
-      win=wmhints->icon_window;
+      i->innerwin=win=wmhints->icon_window;
       XGetGeometry(dpy, win, &r, &x, &y, &w, &h, &b, &d);
       x-=4; y-=4; w+=8; h+=8;
     } else if((wmhints->flags&IconPixmapHint) && wmhints->icon_pixmap) {
@@ -243,7 +259,7 @@ void createiconicon(Icon *i, XWMHints *wmhints)
       y=wmhints->icon_y;
     } else if(i->window) {
       Window r;
-      int w, h, bw, d;
+      unsigned int w, h, bw, d;
       XGetGeometry(dpy, i->window, &r, &x, &y, &w, &h, &bw, &d);
     }
   } else {
@@ -264,7 +280,8 @@ void createiconicon(Icon *i, XWMHints *wmhints)
     XSelectInput(dpy, i->window,ExposureMask|ButtonPressMask|ButtonReleaseMask);
   } else {
     XMoveResizeWindow(dpy, i->window, i->x=x, i->y=y, i->width=w, i->height=h);
-    redrawicon(i, i->window);
+    if(i->mapped)
+      redrawicon(i, i->window);
   }
   if(!(i->labelwin)) {
     i->labelwin=XCreateWindow(dpy, scr->back, 0, 0, 1, 1, 0,
@@ -276,7 +293,7 @@ void createiconicon(Icon *i, XWMHints *wmhints)
   }
   if(i->client)
     newicontitle(i->client);
-  if(win=i->innerwin) {
+  if((win=i->innerwin)) {
     XAddToSaveSet(dpy, win);
     XReparentWindow(dpy, win, i->window, 4, 4);
     XSelectInput(dpy, win, SubstructureRedirectMask);
@@ -293,7 +310,9 @@ void createicon(Client *c)
   c->icon=i=(Icon *)calloc(1, sizeof(Icon));
   i->scr=scr=c->scr;
   i->client=c;
+  i->module=NULL;
   i->next=scr->icons;
+  i->parent=scr->back;
   scr->icons=i;
 
   wmhints=XGetWMHints(dpy, c->window);
@@ -301,19 +320,98 @@ void createicon(Client *c)
   if(wmhints) XFree(wmhints);
 }
 
+Icon *createappicon(struct module *m, Window p, char *name,
+		    Pixmap pm1, Pixmap pm2, int x, int y)
+{
+  Icon *i;
+  Client *c;
+  int tx, ty, ap=0;
+  unsigned int w, h, b, d;
+  Window r, ws[3];
+  XSetWindowAttributes attr;
+
+  if(x==NO_ICON_POSITION || y==NO_ICON_POSITION) {
+    x=0; y=0; ap++;
+  }
+
+  i=(Icon *)calloc(1, sizeof(Icon));
+  if(!XFindContext(dpy, p, client_context, (XPointer*)&c)) {
+    scr=c->scr;
+  } else
+    if(XFindContext(dpy, p, screen_context, (XPointer*)&scr))
+      scr=front;
+  if(p==scr->root) p=scr->back;
+
+  i->scr=scr;
+  i->client=NULL;
+  i->module=m;
+  i->next=scr->icons;
+  i->parent=p;
+  scr->icons=i;
+
+  i->iconpm=pm1;
+  i->secondpm=pm2;
+  XGetGeometry(dpy, i->iconpm, &r, &tx, &ty, &w, &h, &b, &d);
+  w+=8;
+  h+=8;
+
+  attr.override_redirect=True;
+  attr.background_pixel=scr->dri.dri_Pens[BACKGROUNDPEN];
+  i->window=XCreateWindow(dpy, p, i->x=x, i->y=y,
+			  i->width=w, i->height=h, 0, CopyFromParent,
+			  InputOutput, CopyFromParent,
+			  CWOverrideRedirect|CWBackPixel, &attr);
+  XSaveContext(dpy, i->window, icon_context, (XPointer)i);
+  XSelectInput(dpy, i->window,ExposureMask|ButtonPressMask|ButtonReleaseMask);
+
+  i->labelwin=XCreateWindow(dpy, p, 0, 0, 1, 1, 0,
+			    CopyFromParent, InputOutput, CopyFromParent,
+			    CWOverrideRedirect|CWBackPixel, &attr);
+  XSaveContext(dpy, i->labelwin, icon_context, (XPointer)i);
+  XSelectInput(dpy, i->labelwin, ExposureMask);
+
+  if((i->label.value=malloc((i->label.nitems=strlen(name))+1))!=NULL) {
+    strcpy((char *)i->label.value, name);
+    i->labelwidth=XTextWidth(labelfont, (char *)i->label.value,
+			     i->label.nitems);
+    if(i->labelwidth)
+      XResizeWindow(dpy, i->labelwin, i->labelwidth, scr->lh);
+    XMoveWindow(dpy, i->labelwin,
+		i->x+(i->width>>1)-(i->labelwidth>>1),
+		i->y+i->height+1);
+  }
+
+  if(i->parent==scr->back) {
+    ws[0]=scr->menubar;
+    ws[1]=i->window;
+    ws[2]=i->labelwin;
+    XRestackWindows(dpy, ws, 3);
+  } else {
+    XRaiseWindow(dpy, i->labelwin);
+    XRaiseWindow(dpy, i->window);
+  }
+
+  if(ap) adjusticon(i);
+
+  i->mapped=1;
+  if(i->labelwidth)
+    XMapWindow(dpy, i->labelwin);
+  XMapWindow(dpy, i->window);
+
+  return i;
+}
+
 void rmicon(Icon *i)
 {
   Icon *ii;
-  Window r,p,*ch;
-  unsigned int nc;
-  
+
   if (i->selected)
     deselecticon(i);
 
   if (i == i->scr->icons)
     i->scr->icons = i->next;
   else
-    if(ii = i->scr->icons)
+    if((ii = i->scr->icons))
       for (; ii->next; ii = ii->next)
 	if (ii->next == i) {
 	  ii->next = i->next;
@@ -328,7 +426,10 @@ void rmicon(Icon *i)
     XDeleteContext(dpy, i->labelwin, icon_context);
   }
   if(i->label.value)
-    XFree(i->label.value);
+    if(i->module)
+      free(i->label.value);
+    else
+      XFree(i->label.value);
   free(i);
 }
 
@@ -357,7 +458,7 @@ void cleanupicons()
   Icon *i, **icons;
   int nicons=0, maxicons=16;
 
-  if(icons=calloc(maxicons, sizeof(Icon*))) {
+  if((icons=calloc(maxicons, sizeof(Icon*)))) {
     for(i=scr->icons; i; i=i->next)
       if(i->window) {
 	if(nicons>=maxicons)
@@ -400,13 +501,19 @@ void newicontitle(Client *c)
     XFree(i->label.value);
   if(!(XGetWMIconName(dpy, c->window, &i->label))) {
     i->label.value=NULL;
-    i->labelwidth=XTextWidth(labelfont, "()", i->label.nitems=2);
+    i->labelwidth=0;
   } else
-    i->labelwidth=XTextWidth(labelfont, i->label.value,
+    i->labelwidth=XTextWidth(labelfont, (char *)i->label.value,
 			     i->label.nitems);
-  XResizeWindow(dpy, i->labelwin, i->labelwidth, c->scr->lh);
+  if(i->labelwidth)
+    XResizeWindow(dpy, i->labelwin, i->labelwidth, c->scr->lh);
+  if(i->mapped && i->labelwidth>0)
+    XMapWindow(dpy, i->labelwin);
+  else
+    XUnmapWindow(dpy, i->labelwin);
   XMoveWindow(dpy, i->labelwin,
 	      i->x+(i->width>>1)-(i->labelwidth>>1),
 	      i->y+i->height+1);
-  redrawicon(i, i->labelwin);
+  if(i->mapped)
+    redrawicon(i, i->labelwin);
 }

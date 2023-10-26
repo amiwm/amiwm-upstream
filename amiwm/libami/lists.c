@@ -77,7 +77,7 @@ struct Node *FindName(struct List *list, STRPTR name)
 {
   struct Node *node;
   for(node = list->lh_Head; node->ln_Succ; node = node->ln_Succ)
-    if(!strcmp(name, node->ln_Name))
+    if(!strcmp((char *)name, node->ln_Name))
       return node;
   return NULL;
 }

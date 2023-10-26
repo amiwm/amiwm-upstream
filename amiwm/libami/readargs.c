@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <locale.h>
-#include <ctype.h>
 
 #ifdef AMIGAOS
 
@@ -34,7 +32,7 @@ static void addquoted(const char *arg)
 {
   char ch;
   addachar(' '); addachar('"');
-  while(ch=*arg++) switch(ch) {
+  while((ch=*arg++)) switch(ch) {
   case '\n': addachar('*'); addachar('N'); break;
   case '\"': addachar('*'); addachar('\"'); break;
   case '*': addachar(ch);
@@ -156,32 +154,6 @@ static void CS_UnReadChar(struct CSource *cSource, UBYTE ch)
     --cSource->CS_CurChr;
 }
 
-static UBYTE ToUpper(UBYTE ch)
-{
-  static int firstcall=1;
-  if(firstcall) {
-    setlocale(LC_CTYPE, "");
-    firstcall=0;
-  }
-  return toupper(ch);
-}
-
-static LONG StrToLong(STRPTR str, LONG *n)
-{
-  STRPTR end;
-
-  *n=strtol(str, (char **)&end, 0);
-  return end-str;
-}
-
-static LONG Stricmp(STRPTR a, STRPTR b)
-{
-  while(*a && *b)
-    if(ToUpper(*a++)!=ToUpper(*b++))
-      return FALSE;
-  return !(*a || *b);
-}
-
 static LONG intreaditem(STRPTR buffer, LONG maxchars, struct CSource *input,
 		int mode, UBYTE **start, UBYTE **end)
 {
@@ -246,7 +218,7 @@ LONG ReadItem(STRPTR buffer, LONG maxchars, struct CSource *input)
 
 LONG FindArg(STRPTR template, STRPTR keyword)
 {
-  int kwlen=strlen(keyword);
+  int kwlen=strlen((char *)keyword);
   int kwindex, argindex=0;
   char ch;
 
@@ -367,7 +339,8 @@ struct RDArgs * ReadArgs(STRPTR template, LONG *array, struct RDArgs *rdargs)
   }
   start=rdargs->RDA_Buffer;
   end=rdargs->RDA_Buffer+rdargs->RDA_BufSiz;
-  if((error=parseswitches(template, strlen(template), switches, &numargs)))
+  if((error=parseswitches(template, strlen((char *)template),
+			  switches, &numargs)))
     goto fail;
 
   for(;;) {
@@ -432,7 +405,7 @@ struct RDArgs * ReadArgs(STRPTR template, LONG *array, struct RDArgs *rdargs)
       munched=0;
 force:
       if(end-start<=munched) {
-	char *old;
+	UBYTE *old;
 	if(!(old=ra_realloc(rdargs, &start, &end)))
 	  goto nomemfail;
 	memcpy(start, old, munched);
@@ -452,13 +425,13 @@ not_namedarg:
 	goto quoted;
       if(ch=='\n' && start[0]=='?' && start[1]=='\0' &&
 	 !(rdargs->RDA_Flags & RDAF_NOPROMPT)) {
-	char *helptext = template;
+	UBYTE *helptext = template;
 	if(!(rdargs->RDA_Flags & RDAF_PRIVATE1)) {
 	  rdargs->RDA_Flags |= RDAF_PRIVATE1;
 	  if(rdargs->RDA_ExtHelp)
 	    helptext=rdargs->RDA_ExtHelp;
 	}
-	fprintf(stderr, "%s: ", helptext);
+	fprintf(stderr, "%s: ", (char *)helptext);
 	fflush(stderr);
 	break;
       }
@@ -478,7 +451,7 @@ quoted:
           if((sw=*swptr++)&RA_FOUND)
             continue;
           if(sw&RA_FORCE) {
-	    munched=strlen(start);
+	    munched=strlen((char *)start);
 	    if(itemtype!=ITEM_QUOTED)
 	      start[munched++]=' ';
 	    goto force;
@@ -506,13 +479,13 @@ quoted:
         error=ERROR_TOO_MANY_ARGS;
         goto fail;
       } else if(sw&RA_TOGGLE) {
-        if(Stricmp(start, "yes"))
+        if(Stricmp(start, (STRPTR)"yes"))
 	  ((Argtype*)array)[argnum].num=-1;
-        else if(Stricmp(start, "no"))
+        else if(Stricmp(start, (STRPTR)"no"))
 	  ((Argtype*)array)[argnum].num=0;
-        else if(Stricmp(start, "on"))
+        else if(Stricmp(start, (STRPTR)"on"))
 	  ((Argtype*)array)[argnum].num=-1;
-        else if(Stricmp(start, "off"))
+        else if(Stricmp(start, (STRPTR)"off"))
 	  ((Argtype*)array)[argnum].num=0;
         else {
 	  error=ERROR_KEY_NEEDS_ARG;
@@ -521,7 +494,7 @@ quoted:
       } else if(sw&RA_NUMERIC) {
         LONG n; int len;
 numeric:
-        if((len=StrToLong(start, &n))<=0 || len!=strlen(start)) {
+        if((len=StrToLong(start, &n))<=0 || len!=strlen((char *)start)) {
 	  error=ERROR_BAD_NUMBER;
 	  goto fail;
         }
@@ -540,7 +513,7 @@ numeric:
       } else
         ((Argtype*)array)[argnum].ptr=start;
 
-      start+=strlen(start)+1;
+      start+=strlen((char *)start)+1;
       break;
 
     default:

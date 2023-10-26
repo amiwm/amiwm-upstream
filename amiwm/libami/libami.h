@@ -1,4 +1,5 @@
 #include <X11/Xlib.h>
+#include <X11/Xmd.h>
 
 #ifdef AMIGAOS
 #include <exec/types.h>
@@ -6,6 +7,9 @@
 #include <exec/lists.h>
 #include <dos/dos.h>
 #include <dos/rdargs.h>
+#include <proto/exec.h>
+#include <proto/dos.h>
+#include <proto/icon.h>
 #else
 
 #define GLOBAL	extern
@@ -24,23 +28,19 @@
 #define BOOL Amiga_BOOL
 #endif
 
-typedef void    *APTR;
-typedef long	LONG;
-typedef unsigned long ULONG;
-typedef unsigned long LONGBITS;
-typedef short	WORD;
-typedef unsigned short UWORD;
-typedef unsigned short WORDBITS;
-#if __STDC__
-typedef signed char BYTE;
-#else
-typedef char BYTE;
-#endif
-typedef unsigned char UBYTE;
-typedef unsigned char BYTEBITS;
-typedef unsigned short RPTR;
+typedef void   *APTR;
+typedef INT32  LONG;
+typedef CARD32 ULONG;
+typedef BITS32 LONGBITS;
+typedef INT16  WORD;
+typedef CARD16 UWORD;
+typedef BITS16 WORDBITS;
+typedef INT8   BYTE;
+typedef CARD8  UBYTE;
+typedef CARD8  BYTEBITS;
+typedef CARD16 RPTR;
 typedef unsigned char  *STRPTR;
-typedef short BOOL;
+typedef INT16  BOOL;
 
 #ifndef TRUE
 #define TRUE	1
@@ -52,6 +52,7 @@ typedef short BOOL;
 #define NULL	0L
 #endif
 
+#define WF_NOICONIFY 1
 
 struct Node {
   struct  Node *ln_Succ;
@@ -105,6 +106,65 @@ struct RDArgs {
   LONG RDA_Flags;
 };
 
+struct Image
+{
+  WORD LeftEdge, TopEdge, Width, Height, Depth;
+  UWORD *ImageData;
+  UBYTE PlanePick, PlaneOnOff;
+  struct Image *NextImage;
+};
+
+struct Gadget
+{
+  struct Gadget *NextGadget;
+  WORD LeftEdge, TopEdge, Width, Height;
+  UWORD Flags, Activation, GadgetType;
+  APTR GadgetRender, SelectRender;
+  struct IntuiText *GadgetText;
+  LONG MutualExclude;
+  APTR SpecialInfo;
+  UWORD GadgetID;
+  APTR UserData;
+};
+
+struct NewWindow
+{
+  WORD LeftEdge, TopEdge, Width, Height;
+  UBYTE DetailPen, BlockPen;
+  ULONG IDCMPFlags, Flags;
+  struct Gadget *FirstGadget;
+  struct Image *CheckMark;
+  UBYTE *Title;
+  struct Screen *Screen;
+  struct BitMap *BitMap;
+  WORD MinWidth, MinHeight;
+  UWORD MaxWidth, MaxHeight;
+  UWORD Type;
+};
+
+struct DrawerData {
+  struct NewWindow dd_NewWindow;
+  LONG dd_CurrentX;
+  LONG dd_CurrentY;
+  ULONG dd_Flags;
+  UWORD dd_ViewModes;
+};
+
+struct DiskObject {
+  UWORD do_Magic;
+  UWORD do_Version;
+  struct Gadget do_Gadget;
+  UBYTE do_Type;
+  char *do_DefaultTool;
+  char **do_ToolTypes;
+  LONG do_CurrentX;
+  LONG do_CurrentY;
+  struct DrawerData *do_DrawerData;
+  char *do_ToolWindow;
+  LONG do_StackSize;
+};
+
+
 #define RDAB_STDIN	0	/* Use "STDIN" rather than "COMMAND LINE" */
 #define RDAF_STDIN	1
 #define RDAB_NOALLOC	1	/* If set, do not allocate extra string space.*/
@@ -135,12 +195,28 @@ extern LONG ReadItem(STRPTR, LONG, struct CSource *);
 extern LONG FindArg(STRPTR, STRPTR);
 extern struct RDArgs * ReadArgs(STRPTR, LONG *, struct RDArgs *);
 
+extern UBYTE ToUpper(UBYTE);
+extern LONG StrToLong(STRPTR, LONG *);
+extern LONG Stricmp(STRPTR, STRPTR);
+
+extern char *BumpRevision(char *, char *);
+extern BOOL DeleteDiskObject(char *);
+extern void FreeDiskObject(struct DiskObject *);
+extern struct DiskObject *GetDefDiskObject(LONG);
+extern struct DiskObject *GetDiskObject(char *);
+extern struct DiskObject *GetDiskObjectNew(char *);
+extern BOOL MatchToolValue(char *, char *);
+extern BOOL PutDiskObject(char *, struct DiskObject *);
+
 extern BOOL Fault(LONG, UBYTE *, UBYTE *, LONG);
 extern BOOL PrintFault(LONG, UBYTE *);
 extern LONG IoErr();
 extern LONG SetIoErr(LONG);
 
 #endif
+
+extern Pixmap image_to_pixmap(Display *, Window, GC, unsigned long,
+			      unsigned long *, int, struct Image *, int, int);
 
 typedef union { LONG num; APTR ptr; } Argtype;
 
@@ -164,8 +240,9 @@ extern Window md_root;
 /* module.c */
 extern void md_exit(int);
 extern int md_handle_input(void);
-extern void md_process_queued(void);
+extern void md_process_queued_events(void);
 extern void md_main_loop(void);
+extern int md_connection_number(void);
 extern int md_command(XID, int, void *, int, char **);
 extern int md_command0(XID, int, void *, int);
 extern int md_command00(XID, int);
@@ -181,6 +258,7 @@ extern int md_rotate_screen(Window);
 extern int md_front(Window);
 extern int md_back(Window);
 extern int md_iconify(Window);
+extern int md_errormsg(Window, char *);
 
 /* eventdispatcher.c */
 extern void cx_event_broker(int, unsigned long, int (*)(XEvent*));
@@ -192,3 +270,13 @@ extern int md_ungrabkey(int);
 /* hotkey.c */
 extern void cx_hotkey(KeySym, unsigned int, int, int,
 		      void (*)(XEvent*,void*), void*);
+
+/* mdicon.c */
+extern Window md_create_appicon(Window, int, int, char *,
+				Pixmap, Pixmap);
+extern Pixmap md_image_to_pixmap(Window, unsigned long, struct Image *,
+				 int, int);
+extern char *get_current_icondir(void);
+
+/* mdwindow.c */
+extern int md_set_appwindow(Window);

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <X11/Xmu/CharSet.h>
 
 #include "alloc.h"
 #include "prefs.h"
@@ -13,6 +14,9 @@
 extern struct Library *Xmu1Base;
 #endif
 
+extern void set_sys_palette(void);
+extern int yyparse (void);
+
 struct prefs_struct prefs;
 
 #ifndef RC_FILENAME
@@ -22,17 +26,26 @@ struct prefs_struct prefs;
 FILE *rcfile;
 int ParseError=0;
 
-void read_rc_file()
+void read_rc_file(char *filename, int manage_all)
 {
   char *home, *fn;
 
-  memset(prefs, 0, sizeof(prefs));
+  memset(&prefs, 0, sizeof(prefs));
+  prefs.manage_all = manage_all;
   prefs.sizeborder=Psizeright;
   prefs.icondir=AMIWM_HOME;
   prefs.module_path=AMIWM_HOME;
   prefs.defaulticon="def_tool.info";
   prefs.borderwidth=1;
   set_sys_palette();
+
+  if(filename!=NULL && (rcfile=fopen(filename, "r"))) {
+    yyparse();
+    fclose(rcfile);
+    rcfile=NULL;
+    return;
+  }
+
   home=getenv("HOME");
 #ifdef AMIGAOS
   {
@@ -40,7 +53,7 @@ void read_rc_file()
     strncpy(fn, home, sizeof(fn)-1);
     fn[sizeof(fn)-1]='\0';
     AddPart(fn, RC_FILENAME, sizeof(fn));
-    if(rcfile=fopen(fn, "r")) {
+    if((rcfile=fopen(fn, "r"))) {
       yyparse();
       fclose(rcfile);
       rcfile=NULL;
@@ -49,12 +62,12 @@ void read_rc_file()
   }
 #else
 #ifdef HAVE_ALLOCA
-  if(fn=alloca(strlen(home)+strlen(RC_FILENAME)+4)) {
+  if((fn=alloca(strlen(home)+strlen(RC_FILENAME)+4))) {
 #else
-  if(fn=malloc(strlen(home)+strlen(RC_FILENAME)+4)) {
+  if((fn=malloc(strlen(home)+strlen(RC_FILENAME)+4))) {
 #endif
     sprintf(fn, "%s/"RC_FILENAME, home);
-    if(rcfile=fopen(fn, "r")) {
+    if((rcfile=fopen(fn, "r"))) {
       yyparse();
       fclose(rcfile);
 #ifndef HAVE_ALLOCA
@@ -67,7 +80,7 @@ void read_rc_file()
 #endif
   }
 #endif
-  if(rcfile=fopen(AMIWM_HOME"/system"RC_FILENAME, "r")) {
+  if((rcfile=fopen(AMIWM_HOME"/system"RC_FILENAME, "r"))) {
     yyparse();
     fclose(rcfile);
   }
@@ -84,12 +97,15 @@ struct keyword { char *name; int token; } keywords[] = {
   { "blockpen", T_BLOCKPEN },
   { "both", BOTH },
   { "bottom", BOTTOM },
+  { "clicktotype", CLICKTOTYPE },
   { "defaulticon", DEFAULTICON },
   { "detailpen", T_DETAILPEN },
   { "false", NO },
   { "fastquit", FASTQUIT },
   { "fillpen", T_FILLPEN },
   { "filltextpen", T_FILLTEXTPEN },
+  { "focus", FOCUS },
+  { "followmouse", FOLLOWMOUSE },
   { "forcemove", FORCEMOVE },
   { "highlighttextpen", T_HIGHLIGHTTEXTPEN },
   { "icondir", ICONDIR },
@@ -105,12 +121,14 @@ struct keyword { char *name; int token; } keywords[] = {
   { "off", NO },
   { "on", YES },
   { "right", RIGHT },
+  { "schwartz", SCHWARTZ },
   { "screen", SCREEN },
   { "screenfont", SCREENFONT },
   { "separator", SEPARATOR },
   { "shadowpen", T_SHADOWPEN },
   { "shinepen", T_SHINEPEN },
   { "sizeborder", SIZEBORDER },
+  { "sloppy", SLOPPY },
   { "system", SYSTEM },
   { "textpen", T_TEXTPEN },
   { "toolitem", TOOLITEM },

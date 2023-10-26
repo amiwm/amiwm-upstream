@@ -1,23 +1,32 @@
+#include <stdio.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
 #include <X11/Xproto.h>
+#include <X11/Xresource.h>
 #include <X11/keysym.h>
+#include <X11/Xmu/Error.h>
+#ifdef HAVE_X11_EXTENSIONS_SHAPE_H
+#include <X11/extensions/shape.h>
+#endif
 #ifdef AMIGAOS
 #include <x11/xtrans.h>
 #endif
-#include <stdio.h>
 #ifdef HAVE_FCNTL_H
 #include <fcntl.h>
 #endif
 #include <signal.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 #ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
 #endif
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
 #endif
 
 #include "drawinfo.h"
@@ -26,6 +35,8 @@
 #include "client.h"
 #include "prefs.h"
 #include "module.h"
+#include "icc.h"
+#include "libami.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -57,7 +68,7 @@ Display *dpy;
 char *progname;
 Cursor wm_curs;
 int signalled=0, forcemoving=0;
-Client *dragclient=NULL, *resizeclient=NULL;
+Client *activeclient=NULL, *dragclient=NULL, *resizeclient=NULL;
 Client *rubberclient=NULL, *clickclient=NULL, *doubleclient=NULL;
 Scrn *boundingscr=NULL; Window boundingwin=None;
 DragIcon *dragiconlist=NULL;
@@ -65,13 +76,17 @@ int numdragicons=0;
 Window clickwindow=None;
 int rubberx, rubbery, rubberh, rubberw, rubberx0, rubbery0, olddragx, olddragy;
 Time last_icon_click=0, last_double=0;
-static int initting=0, ignore_badwindow=0;
+int initting=0;
+static int ignore_badwindow=0;
 int dblClickTime=1500;
-XContext client_context, screen_context, icon_context, menu_context;
+XContext client_context, screen_context, icon_context, menu_context, vroot_context;
 Scrn *dragscreen=NULL, *menuactive=NULL;
 static int d_offset=0;
 static fd_set master_fd_set;
 static int max_fd=0;
+char *free_screentitle=NULL;
+char *x_server;
+int shape_event_base, shape_error_base, shape_extn=0;
 
 unsigned int meta_mask, switch_mask;
 
@@ -88,10 +103,6 @@ extern void gadgetunclicked(Client *c, XEvent *e);
 extern void gadgetaborted(Client *c);
 extern void clickenter(void);
 extern void clickleave(void);
-extern void adjusticon(Icon *i);
-extern void cleanupicons();
-extern void propterychange(Client *c, Atom a);
-extern void setclientstate(Client *, int);
 extern void menu_on(void);
 extern void menu_off(void);
 extern void menubar_enter(Window);
@@ -103,13 +114,17 @@ extern void openscreen(char *, Window);
 extern void realizescreens(void);
 extern Scrn *getscreenbyroot(Window);
 extern void assimilate(Window, int, int);
-extern void selecticon(Icon *);
-extern void deselecticon(Icon *);
 extern void deselect_all_icons(Scrn *);
 extern void reparenticon(Icon *, Scrn *, int, int);
 extern void handle_client_message(Client *, XClientMessageEvent *);
 extern void handle_module_input(fd_set *);
 extern int dispatch_event_to_broker(XEvent *, unsigned long, struct module *);
+extern XEvent *mkcmessage(Window w, Atom a, long x);
+extern void reshape_frame(Client *c);
+extern void read_rc_file(char *filename, int manage_all);
+extern void init_modules();
+extern void flushmodules();
+extern void raiselowerclient(Client *, int);
 
 #ifndef AMIGAOS
 void restart_amiwm()
@@ -136,6 +151,9 @@ int handler(Display *d, XErrorEvent *e)
 
   if ((e->error_code == BadMatch && e->request_code == X_ChangeSaveSet) ||
       (e->error_code == BadWindow && e->request_code == X_ChangeProperty) ||
+      (e->error_code == BadWindow && e->request_code == X_GetProperty) ||
+      (e->error_code == BadWindow && e->request_code == X_GetWindowAttributes) ||
+      (e->error_code == BadWindow && e->request_code == X_ChangeWindowAttributes) ||
       (e->error_code == BadDrawable && e->request_code == X_GetGeometry) ||
       (e->error_code == BadWindow && e->request_code == X_SendEvent))
     return 0;
@@ -168,7 +186,7 @@ void remove_call_out(void (*what)(void *), void *with)
 
   while(*e && ((*e)->what != what || (*e)->with))
     e=&(*e)->next;
-  if(ee=*e) {
+  if((ee=*e)) {
     *e=(*e)->next;
     free(ee);
   }
@@ -242,24 +260,32 @@ void lookup_keysyms()
   int i,j,k,maxsym,mincode,maxcode;
   XModifierKeymap *map=XGetModifierMapping(dpy);
   KeySym *kp, *kmap;
+  unsigned int alt_mask = 0;
   meta_mask=0, switch_mask=0;
   XDisplayKeycodes(dpy, &mincode, &maxcode);
   kmap=XGetKeyboardMapping(dpy, mincode, maxcode-mincode+1, &maxsym);
   for(i=3; i<8; i++)
     for(j=0; j<map->max_keypermod; j++)
-      for(kp=kmap+(map->modifiermap[i*map->max_keypermod+j]-mincode)*maxsym,
-	  k=0; k<maxsym; k++)
-	switch(*kp++) {
-	case XK_Meta_L:
-	case XK_Meta_R:
-	  meta_mask|=1<<i;
-	  break;
-	case XK_Mode_switch:
-	  switch_mask|=1<<i;
-	  break;
-	}
+      if(map->modifiermap[i*map->max_keypermod+j] >= mincode)
+	for(kp=kmap+(map->modifiermap[i*map->max_keypermod+j]-mincode)*maxsym,
+	      k=0; k<maxsym; k++)
+	  switch(*kp++) {
+	  case XK_Meta_L:
+	  case XK_Meta_R:
+	    meta_mask|=1<<i;
+	    break;
+	  case XK_Mode_switch:
+	    switch_mask|=1<<i;
+	    break;
+	  case XK_Alt_L:
+	  case XK_Alt_R:
+	    alt_mask|=1<<i;
+	    break;
+	  }
   XFree(kmap);
   XFreeModifiermap(map);
+  if(meta_mask == 0)
+    meta_mask = alt_mask;
 }
 
 
@@ -268,6 +294,10 @@ void restorescreentitle(Scrn *s)
   (scr=s)->title=s->deftitle;
   XClearWindow(dpy, s->menubar);
   redrawmenubar(s->menubar);  
+  if(free_screentitle) {
+    free(free_screentitle);
+    free_screentitle=NULL;
+  }
 }
 
 void wberror(Scrn *s, char *message)
@@ -278,6 +308,13 @@ void wberror(Scrn *s, char *message)
   redrawmenubar(s->menubar);
   XBell(dpy, 100);
   call_out(2000, (void(*)(void *))restorescreentitle, s);
+}
+
+void setfocus(Window w)
+{
+  if(w == None && prefs.focus != FOC_CLICKTOTYPE)
+    w = PointerRoot;
+  XSetInputFocus(dpy, w, (prefs.focus==FOC_CLICKTOTYPE? RevertToNone:RevertToPointerRoot), CurrentTime);
 }
 
 void drawrubber()
@@ -372,6 +409,8 @@ void startbounding(Scrn *s, Window w, XEvent *e)
 void endbounding(XEvent *e)
 {
   Icon *i;
+  int bx, by;
+  Window cc;
 
   if(boundingscr) {
     remove_call_out(move_dashes, NULL);
@@ -390,8 +429,10 @@ void endbounding(XEvent *e)
     if(rubberw>=HYSTERESIS || rubberh>=HYSTERESIS)
       for(i=boundingscr->icons; i; i=i->next)
 	if(i->window && i->mapped &&
-	   i->x<rubberx+rubberw && i->y<rubbery+rubberh &&
-	   i->x+i->width>rubberx && i->y+i->height>rubbery)
+	   XTranslateCoordinates(dpy, i->parent, scr->back, i->x, i->y,
+				 &bx, &by, &cc) &&
+	   bx<rubberx+rubberw && by<rubbery+rubberh &&
+	   bx+i->width>rubberx && by+i->height>rubbery)
 	  selecticon(i);
     boundingscr=NULL;
     XUngrabServer(dpy);
@@ -436,7 +477,7 @@ void startscreendragging(Scrn *s, XEvent *e)
 void endscreendragging()
 {
   Scrn *s;
-  if(s=dragscreen) {
+  if((s=dragscreen)) {
 #ifndef ASSIMILATE_WINDOWS
     scrsendconfig(dragscreen);
 #endif
@@ -481,6 +522,8 @@ void endicondragging(XEvent *e)
 {
   int i;
   Client *c;
+  int wx, wy;
+  Window ch;
 
   scr=front;
   for(;;) {
@@ -491,14 +534,30 @@ void endicondragging(XEvent *e)
       return;
     }
   }
-  for(c=clients; c; c=c->next)
-    if(c->scr == scr && c->state == NormalState && e->xbutton.x_root>=c->x &&
-       e->xbutton.y_root>=c->y+scr->y &&
-       e->xbutton.x_root<c->x+c->pwidth &&
-       e->xbutton.y_root<c->y+c->pheight+scr->y)
-      break;
+
+  if(XTranslateCoordinates(dpy, scr->root, scr->back,
+			   e->xbutton.x_root, e->xbutton.y_root,
+			   &wx, &wy, &ch) && ch!=None) {
+    if(XFindContext(dpy, ch, client_context, (XPointer*)&c) ||
+       c->scr != scr || c->state != NormalState)
+      c = NULL;
+  } else
+    c = NULL;
+
   if(c) {
-    badicondrop();
+    if(c->module) {
+      extern Atom amiwm_appwindowmsg;
+      XTranslateCoordinates(dpy, scr->back, c->window, -4, -4, &wx, &wy, &ch);
+      for(i=0; i<numdragicons; i++) {
+	XEvent *e=mkcmessage(c->window, amiwm_appwindowmsg,
+			     dragiconlist[i].icon->window);
+	e->xclient.data.l[2] = dragiconlist[i].x+wx;
+	e->xclient.data.l[3] = dragiconlist[i].y+wy;
+	dispatch_event_to_broker(e, 0, c->module);
+      }
+      aborticondragging();
+    } else
+      badicondrop();
     return;
   }
 
@@ -523,6 +582,7 @@ void starticondragging(Scrn *scr, XEvent *e)
   XWindowAttributes xwa;
   XSetWindowAttributes xswa;
   Icon *i;
+  Window ww;
 
   aborticondragging();
   for(i=scr->firstselected; i; i=i->nextselected)
@@ -539,6 +599,9 @@ void starticondragging(Scrn *scr, XEvent *e)
   for(numdragicons=0, i=scr->firstselected; i; i=i->nextselected) {
     dragiconlist[numdragicons].icon = i;
     XGetWindowAttributes(dpy, i->window, &xwa);
+    if(i->parent!=scr->back)
+      XTranslateCoordinates(dpy, i->parent, scr->back, xwa.x, xwa.y,
+			    &xwa.x, &xwa.y, &ww);
     dragiconlist[numdragicons].x = xwa.x+4;
     dragiconlist[numdragicons].y = xwa.y+4+scr->y;
     xswa.save_under=True;
@@ -553,13 +616,15 @@ void starticondragging(Scrn *scr, XEvent *e)
       if(i->secondpm) {
 	xswa.background_pixmap = i->secondpm;
 	XGetGeometry(dpy, i->secondpm, &xwa.root, &xwa.x, &xwa.y,
-		     &xwa.width, &xwa.height,
-		     &xwa.border_width, &xwa.depth);
+		     (unsigned int *)&xwa.width, (unsigned int *)&xwa.height,
+		     (unsigned int *)&xwa.border_width,
+		     (unsigned int *)&xwa.depth);
       } else if(i->iconpm) {
 	xswa.background_pixmap = i->iconpm;
 	XGetGeometry(dpy, i->iconpm, &xwa.root, &xwa.x, &xwa.y,
-		     &xwa.width, &xwa.height,
-		     &xwa.border_width, &xwa.depth);
+		     (unsigned int *)&xwa.width, (unsigned int *)&xwa.height,
+		     (unsigned int *)&xwa.border_width,
+		     (unsigned int *)&xwa.depth);
       }
       if(xwa.depth!=scr->depth) {
 	dragiconlist[numdragicons].pm =
@@ -608,22 +673,28 @@ void enddragging()
 
 void do_icon_double_click(Scrn *scr)
 {
+  extern Atom amiwm_appiconmsg;
   Icon *i, *next;
   Client *c;
 
   for(i=scr->firstselected; i; i=next) {
     next=i->nextselected;
-    if(i->labelwin)
-      XUnmapWindow(dpy, i->labelwin);
-    if(i->window)
-      XUnmapWindow(dpy, i->window);
-    i->mapped=0;
-    deselecticon(i);
-    if(c=(i->client)) {
-      XMapWindow(dpy, c->window);
-      if(c->parent!=c->scr->root)
-	XMapRaised(dpy, c->parent);
-      setclientstate(c, NormalState);
+    if(i->module) {
+      dispatch_event_to_broker(mkcmessage(i->window, amiwm_appiconmsg, 0),
+			       0, i->module);
+    } else {
+      if(i->labelwin)
+	XUnmapWindow(dpy, i->labelwin);
+      if(i->window)
+	XUnmapWindow(dpy, i->window);
+      i->mapped=0;
+      deselecticon(i);
+      if((c=(i->client))) {
+	XMapWindow(dpy, c->window);
+	if(c->parent!=c->scr->root)
+	  XMapRaised(dpy, c->parent);
+	setclientstate(c, NormalState);
+      }
     }
   }
 }
@@ -684,7 +755,7 @@ void internal_broker(XEvent *e)
 			      ((e->xkey.state & ShiftMask)?1:0)+
 			      ((e->xkey.state & switch_mask)?2:0));
       void *item;
-      if(item=getitembyhotkey(ks))
+      if((item=getitembyhotkey(ks)))
 	menuaction(item);
     }
     break;
@@ -693,21 +764,40 @@ void internal_broker(XEvent *e)
 
 int main(int argc, char *argv[])
 {
-  XWindowAttributes attr;
-  int x_fd;
+  int x_fd, sc;
+  static Argtype array[3];
+  struct RDArgs *ra;
 
   main_argv=argv;
   progname=argv[0];
-  if(!(dpy = XOpenDisplay(NULL))) {
-    fprintf(stderr, "%s: cannot connect to X server %s\n", progname,
-	    XDisplayName(NULL));
+
+  memset(array, 0, sizeof(array));
+  initargs(argc, argv);
+  if(!(ra=ReadArgs((UBYTE *)"RCFILE,DISPLAY/K,SINGLE/S",
+		   (LONG *)array, NULL))) {
+    PrintFault(IoErr(), (UBYTE *)progname);
     exit(1);
+  }
+
+  x_server = XDisplayName(array[1].ptr);
+
+  if(!(dpy = XOpenDisplay(array[1].ptr))) {
+    fprintf(stderr, "%s: cannot connect to X server %s\n", progname, x_server);
+    FreeArgs(ra);
+    exit(1);
+  }
+
+  if(array[1].ptr) {
+    char *env=malloc(strlen((char *)array[1].ptr)+10);
+    sprintf(env, "DISPLAY=%s", (char *)array[1].ptr);
+    putenv(env);
   }
 
   client_context = XUniqueContext();
   screen_context = XUniqueContext();
   icon_context = XUniqueContext();
   menu_context = XUniqueContext();
+  vroot_context = XUniqueContext();
 
   wm_curs=XCreateFontCursor(dpy, XC_top_left_arrow);
 
@@ -718,12 +808,19 @@ int main(int argc, char *argv[])
   initting = 1;
   XSetErrorHandler(handler);
 
+#ifdef HAVE_XSHAPE
+  if(XShapeQueryExtension(dpy, &shape_event_base, &shape_error_base))
+    shape_extn = 1;
+#endif
+
   XSelectInput(dpy, DefaultRootWindow(dpy), SubstructureRedirectMask);
   XSync(dpy, False);
   XSelectInput(dpy, DefaultRootWindow(dpy), NoEventMask);
 
   init_modules();
-  read_rc_file();
+  read_rc_file(array[0].ptr, !array[2].num);
+
+  FreeArgs(ra);
 
   if (signal(SIGTERM, sighandler) == SIG_IGN)
     signal(SIGTERM, SIG_IGN);
@@ -738,14 +835,25 @@ int main(int argc, char *argv[])
 
 #ifndef AMIGAOS
   if((fcntl(ConnectionNumber(dpy), F_SETFD, 1)) == -1)
-    fprintf(stderr, "%s: child cannot disinherit TCP fd\n");
+    fprintf(stderr, "%s: child cannot disinherit TCP fd\n", progname);
 #endif
 
   lookup_keysyms(dpy, &meta_mask, &switch_mask);
 
+  for(sc=0; sc<ScreenCount(dpy); sc++)
+    if(sc==DefaultScreen(dpy) || prefs.manage_all)
+      if(!getscreenbyroot(RootWindow(dpy, sc))) {
+	char buf[64];
+	sprintf(buf, "Screen.%d", sc);
+	openscreen((sc? strdup(buf):"Workbench Screen"), RootWindow(dpy, sc));
+      }
+  /*
   if(!front)
     openscreen("Workbench Screen", DefaultRootWindow(dpy));
+    */
   realizescreens();
+
+  setfocus(None);
 
   initting = 0;
 
@@ -789,6 +897,9 @@ int main(int argc, char *argv[])
 	}
 	break;
       case CreateNotify:
+	if(!XFindContext(dpy, event.xcreatewindow.window, client_context,
+			 (XPointer *)&c))
+	  break;
 	if(!event.xcreatewindow.override_redirect) {
 	  if(!(scr=getscreenbyroot(event.xcreatewindow.parent)))
 	    scr=front;
@@ -809,29 +920,82 @@ int main(int argc, char *argv[])
 	  rmclient(c);
 	  XSync(dpy, False);
 	  ignore_badwindow = 0;
+	} else if(!XFindContext(dpy, event.xdestroywindow.window, icon_context,
+				(XPointer*)&i)) {
+	  ignore_badwindow = 1;
+	  if(i->client)
+	    i->client->icon=NULL;
+	  rmicon(i);
+	  XSync(dpy, False);
+	  ignore_badwindow = 0;	  
 	} else if(event.xdestroywindow.window)
 	  XDeleteContext(dpy, event.xdestroywindow.window, screen_context);
 	break;
       case UnmapNotify:
+	if(c && c->active && (event.xunmap.window==c->parent)) {
+	  c->active=False;
+	  activeclient = NULL;
+	  redrawclient(c);
+	  if(prefs.focus == FOC_CLICKTOTYPE)
+	    XGrabButton(dpy, Button1, AnyModifier, c->parent, True,
+			ButtonPressMask, GrabModeSync, GrabModeAsync,
+			None, wm_curs);
+	  if(!menuactive)
+	    setfocus(None);
+	}
 	if(c && (event.xunmap.window==c->window)) {
-	  if(c->active) {
-	    c->active=False;
-	    redrawclient(c);
-	    if(!menuactive)
-	      XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
-	  }
 	  if((!c->reparenting) && c->parent != c->scr->root) {
+	    Icon *i=c->icon;
 	    XUnmapWindow(dpy, c->parent);
+	    if(i) {
+	      if(i->labelwin)
+		XUnmapWindow(dpy, i->labelwin);
+	      if(i->window)
+		XUnmapWindow(dpy, i->window);
+	      i->mapped=0;
+	      deselecticon(i);
+	    }
 	    setclientstate(c, WithdrawnState);
 	  }
 	  c->reparenting = 0;
 	}
 	break;
       case ConfigureNotify:
+	if((!XFindContext(dpy, event.xconfigure.window, icon_context,
+			 (XPointer *)&i)) &&
+	   event.xconfigure.window == i->window){
+	  i->x=event.xconfigure.x; i->y=event.xconfigure.y;
+	  i->width=event.xconfigure.width; i->height=event.xconfigure.height;
+	  if(i->labelwin) {
+	    XWindowChanges xwc;
+	    xwc.x=i->x+(i->width>>1)-(i->labelwidth>>1);
+	    xwc.y=i->y+i->height+1;
+	    xwc.sibling=i->window;
+	    xwc.stack_mode=Below;
+	    XConfigureWindow(dpy, i->labelwin, CWX|CWY|CWSibling|CWStackMode,
+			       &xwc);
+	  }
+	}
+	break;
+      case ReparentNotify:
+	if((!XFindContext(dpy, event.xreparent.window, icon_context,
+			 (XPointer *)&i)) &&
+	   event.xreparent.window == i->window){
+	  i->parent=event.xreparent.parent;
+	  i->x=event.xreparent.x; i->y=event.xreparent.y;
+	  if(i->labelwin) {
+	    XWindowChanges xwc;
+	    XReparentWindow(dpy, i->labelwin, i->parent,
+			i->x+(i->width>>1)-(i->labelwidth>>1),
+			i->y+i->height+1);
+	    xwc.sibling=i->window;
+	    xwc.stack_mode=Below;
+	    XConfigureWindow(dpy, i->labelwin, CWSibling|CWStackMode, &xwc);
+	  }
+	}
+	break;
       case CirculateNotify:
       case GravityNotify:
-      case ReparentNotify:
-      case MapNotify:
       case NoExpose:
 	break;
       case ClientMessage:
@@ -899,9 +1063,12 @@ int main(int argc, char *argv[])
 	  raiselowerclient(c, event.xcirculaterequest.place);
 	break;
       case MapRequest:
-	if(XFindContext(dpy, event.xmaprequest.window, client_context, (XPointer*)&c))
-	  XMapWindow(dpy, event.xmaprequest.window);
-	else {
+	if(XFindContext(dpy, event.xmaprequest.window, client_context, (XPointer*)&c)) {
+	  if(!(scr=getscreenbyroot(event.xmaprequest.parent)))
+	    scr=front;
+	  c=createclient(event.xmaprequest.window);
+	}
+	{
 	  XWMHints *xwmh;
 	  if(c->parent==c->scr->root && (xwmh=XGetWMHints(dpy, c->window))) {
 	    if(c->state==WithdrawnState && (xwmh->flags&StateHint)
@@ -925,11 +1092,30 @@ int main(int argc, char *argv[])
 	      createicon(c);
 	    adjusticon(c->icon);
 	    XMapWindow(dpy, c->icon->window);
-	    XMapWindow(dpy, c->icon->labelwin);
+	    if(c->icon->labelwidth)
+	      XMapWindow(dpy, c->icon->labelwin);
 	    c->icon->mapped=1;
 	    setclientstate(c, IconicState);
 	    break;
 	  }
+	}
+	break;
+      case MapNotify:
+	if(prefs.focus == FOC_CLICKTOTYPE && c &&
+	   event.xmap.window == c->parent && c->parent != c->scr->root &&
+	   (!c->active)) {
+	  if(activeclient) {
+	    XGrabButton(dpy, Button1, AnyModifier, activeclient->parent,
+			True, ButtonPressMask, GrabModeSync, GrabModeAsync,
+			None, wm_curs);
+	    activeclient->active=False;
+	    redrawclient(activeclient);
+	  }
+	  c->active=True;
+	  activeclient = c;
+	  XUngrabButton(dpy, Button1, AnyModifier, c->parent);
+	  redrawclient(c);
+	  setfocus(c->window);
 	}
 	break;
       case EnterNotify:
@@ -939,9 +1125,15 @@ int main(int argc, char *argv[])
 	} else if(clickwindow && event.xcrossing.window == clickwindow)
 	  clickenter();
 	else if(c) {
-	  if((!c->active) && (c->state==NormalState)) {
-	    XSetInputFocus(dpy, c->window, RevertToPointerRoot, CurrentTime);
+	  if((!c->active) && (c->state==NormalState) &&
+	     prefs.focus!=FOC_CLICKTOTYPE) {
+	    if(activeclient) {
+	      activeclient->active=False;
+	      redrawclient(activeclient);
+	    }
+	    setfocus(c->window);
 	    c->active=True;
+	    activeclient = c;
 	    redrawclient(c);
 	    if(prefs.autoraise && c->parent!=c->scr->root)
 	      XRaiseWindow(dpy, c->parent);
@@ -958,10 +1150,12 @@ int main(int argc, char *argv[])
 	  clickleave();
 	else if(c) {
 	  if(c->active && event.xcrossing.window==c->parent &&
-	     event.xcrossing.detail!=NotifyInferior) {
+	     event.xcrossing.detail!=NotifyInferior &&
+	     prefs.focus == FOC_FOLLOWMOUSE) {
 	    if(!menuactive)
-	      XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
+	      setfocus(None);
 	    c->active=False;
+	    activeclient = NULL;
 	    instcmap(None);
 	    redrawclient(c);
 	  } else if(event.xcrossing.window==c->window &&
@@ -975,7 +1169,25 @@ int main(int argc, char *argv[])
 	   !dragiconlist && event.xbutton.button==Button1 &&
 	   !dragscreen && !menuactive)
 	  if(c) {
-	    if(event.xbutton.window!=c->depth)
+	    if((!c->active) && prefs.focus==FOC_CLICKTOTYPE &&
+	       (c->state==NormalState)) {
+	      if(activeclient) {
+		activeclient->active=False;
+		redrawclient(activeclient);
+		XGrabButton(dpy, Button1, AnyModifier, activeclient->parent,
+			    True, ButtonPressMask, GrabModeSync, GrabModeAsync,
+			    None, wm_curs);
+	      }
+	      setfocus(c->window);
+	      c->active=True;
+	      activeclient = c;
+	      redrawclient(c);
+	      XUngrabButton(dpy, Button1, AnyModifier, c->parent);
+	      if(prefs.autoraise && c->parent!=c->scr->root)
+		XRaiseWindow(dpy, c->parent);
+	    }
+	    if(event.xbutton.window!=c->depth &&
+	       event.xbutton.window!=c->window)
 	      if(c==doubleclient && (event.xbutton.time-last_double)<
 		 dblClickTime) {
 		XRaiseWindow(dpy, c->parent);
@@ -1032,6 +1244,11 @@ int main(int argc, char *argv[])
 	    menu_on();
 	    menuactive=scr;
 	  }
+	}
+	if(prefs.focus == FOC_CLICKTOTYPE && !menuactive) {
+	  XSync(dpy,0);
+	  XAllowEvents(dpy,ReplayPointer,CurrentTime);
+	  XSync(dpy,0);
 	}
 	break;
       case ButtonRelease:
@@ -1163,6 +1380,16 @@ int main(int argc, char *argv[])
 	  propertychange(c, event.xproperty.atom);
 	break;
       default:
+#ifdef HAVE_XSHAPE
+	if(shape_extn && event.type == shape_event_base + ShapeNotify) {
+	  XShapeEvent *s = (XShapeEvent *) &event;
+	  if(c && s->kind == ShapeBounding) {
+	    c->shaped = s->shaped;
+	    reshape_frame(c);
+	  }
+	  break;
+	}
+#endif
 	fprintf(stderr, "%s: got unexpected event type %d.\n",
 		progname, event.type);
       }
@@ -1197,7 +1424,9 @@ int main(int argc, char *argv[])
     fprintf(stderr, "%s: exiting on signal\n", progname);
   flushmodules();
   flushclients();
+  XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
   XFlush(dpy);
   XCloseDisplay(dpy);
-  exit(1);
+  exit(signalled? 0:1);
 }
+

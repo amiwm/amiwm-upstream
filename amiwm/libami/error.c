@@ -23,10 +23,10 @@ BOOL Fault(LONG code, UBYTE *header, UBYTE *buffer, LONG len)
 {
   amiga_errno=code;
   if(header) {
-    int hdlen=strlen(header);
+    int hdlen=strlen((char *)header);
     if(hdlen+2>len)
       return FALSE;
-    strcpy(buffer, header);
+    strcpy((char *)buffer, (char *)header);
     buffer+=hdlen;
     *buffer++=':';
     *buffer++=' ';
@@ -36,22 +36,22 @@ BOOL Fault(LONG code, UBYTE *header, UBYTE *buffer, LONG len)
      && syserrmsg[code-MIN_ERRNO]) {
     if(len<strlen(syserrmsg[code-MIN_ERRNO])+1)
       return FALSE;
-    strcpy(buffer, syserrmsg[code-MIN_ERRNO]);
+    strcpy((char *)buffer, syserrmsg[code-MIN_ERRNO]);
   } else {
     char number[6+4*sizeof(LONG)];
     sprintf(number, "Error %ld", code);
     if(len<strlen(number)+1)
       return FALSE;
-    strcpy(buffer, number);
+    strcpy((char *)buffer, number);
   }
   return TRUE;
 }
 
 BOOL PrintFault(LONG code, UBYTE *header)
 {
-  char buf[128];
+  UBYTE buf[128];
   if(Fault(code, header, buf, sizeof(buf))) {
-    fprintf(stderr, "%s\n", buf);
+    fprintf(stderr, "%s\n", (char *)buf);
     return TRUE;
   } else return FALSE;
 }

@@ -8,6 +8,8 @@ typedef struct _Client {
   struct _Client *next;
   Scrn *scr;
   struct _Icon *icon;
+  struct module *module;
+  int wflags;
   Window window, parent;
   Window close, drag, iconify, zoom, depth, resize;
   Window clicked;
@@ -15,7 +17,7 @@ typedef struct _Client {
   int x, y, pwidth, pheight, dragw, framewidth, frameheight;
   int zoomx, zoomy, zoomw, zoomh;
   int old_bw, proto, state, gravity, reparenting;
-  int active;
+  int active, shaped;
   XTextProperty title;
   XSizeHints sizehints;
 } Client;
@@ -27,5 +29,11 @@ extern Client *getclientbyicon(Window);
 extern Client *createclient(Window);
 extern void rmclient(Client *);
 extern void flushclients(void);
+extern void scrsendconfig(Scrn *);
+extern void sendconfig(Client *);
+extern void getstate(Client *);
+extern void grav_map_frame_to_win(Client *, int, int, int *, int *);
+extern void grav_map_win_to_frame(Client *, int, int, int *, int *);
+extern void setclientstate(Client *, int);
 
 #endif
