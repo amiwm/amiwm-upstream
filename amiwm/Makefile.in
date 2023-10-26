@@ -7,32 +7,43 @@ YACC = @YACC@
 CFLAGS = @CFLAGS@
 YFLAGS = -d
 DEFS = @DEFS@
-ALL_CFLAGS = -I@srcdir@ $(DEFS) $(CFLAGS) @X_CFLAGS@
-LIBS = @X_LIBS@ @X_PRE_LIBS@ -lXext -lXmu -lX11 @X_EXTRA_LIBS@ @LIBS@
+ALL_CFLAGS = -I@srcdir@ -I@srcdir@/libami $(DEFS) $(CFLAGS) @X_CFLAGS@
+LIBS = @X_LIBS@ @X_PRE_LIBS@ -Llibami -lami -lXext -lXmu -lX11 \
+	@X_EXTRA_LIBS@ @LIBS@
 prefix = @prefix@
 exec_prefix = @exec_prefix@
 bindir = $(exec_prefix)/bin
 libdir = $(exec_prefix)/lib
 INSTALL = @INSTALL@
 LN_S = @LN_S@
+RM = -rm -f
+LIBAMI=libami/libami.a
 
 PROGS = amiwm requestchoice executecmd
 
-OBJS  = main.o drawinfo.o client.o frame.o icc.o \
-		icon.o menu.o diskobject.o gram.o lex.o rc.o
+MODULES = Background Keyboard
 
-SRCS = main.c drawinfo.c client.c frame.c icc.c \
+OBJS  = main.o screen.o client.o frame.o icc.o \
+		icon.o menu.o diskobject.o gram.o lex.o rc.o \
+		module.o
+
+SRCS = main.c screen.c client.c frame.c icc.c \
 		icon.c menu.c diskobject.c gram.c lex.c rc.c \
-		requestchoice.c executecmd.c
+		module.c \
+		requestchoice.c executecmd.c kbdmodule.c kbdlexer.c
 
-DISTFILES = README.FIRST README  INSTALL configure configure.in Makefile.in \
-	install-sh smakefile scoptions *.[chly] system.amiwmrc def_tool.info
+DISTFILES = README README.modules INSTALL configure configure.in Makefile.in \
+	install-sh smakefile scoptions *.[chly] system.amiwmrc def_tool.info \
+	Background libami/Makefile.in libami/*.[chly]
 
 PACKAGENAME = amiwm
 
 AMIWM_HOME = $(libdir)/amiwm
 
-all : $(PROGS)
+all : $(PROGS) $(MODULES)
+
+lib :
+	@( cd libami; $(MAKE) libami.a )
 
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) $<
@@ -51,32 +62,49 @@ gram.h gram.c: gram.y
 lex.c : lex.l
 	$(LEX) -t lex.l > lex.c
 
-install : $(PROGS)
+kbdmodule.h kbdmodule.c: kbdmodule.y
+	$(YACC) $(YFLAGS) kbdmodule.y
+	mv y.tab.c kbdmodule.c
+	mv y.tab.h kbdmodule.h
+
+kbdlexer.c : kbdlexer.l
+	$(LEX) -t kbdlexer.l > kbdlexer.c
+
+install : $(PROGS) $(MODULES)
 	mkdir -p $(AMIWM_HOME)
 	$(INSTALL) requestchoice $(AMIWM_HOME)/requestchoice
 	$(INSTALL) executecmd $(AMIWM_HOME)/executecmd
+	for module in $(MODULES); do \
+	  $(INSTALL) $$module $(AMIWM_HOME)/$$module; \
+	done
 	$(INSTALL) -m 644 system.amiwmrc $(AMIWM_HOME)/system.amiwmrc
 	$(INSTALL) -m 644 def_tool.info $(AMIWM_HOME)/def_tool.info
 	$(INSTALL) amiwm $(bindir)/amiwm
 	$(RM) $(bindir)/requestchoice
 	$(LN_S) $(AMIWM_HOME)/requestchoice $(bindir)/requestchoice
 
-amiwm : $(OBJS)
+amiwm : $(OBJS) lib
 	$(CC) -o amiwm $(OBJS) $(LIBS)
 
-requestchoice : requestchoice.o drawinfo.o
-	$(CC) -o requestchoice requestchoice.o drawinfo.o $(LIBS)
+requestchoice : requestchoice.o lib
+	$(CC) -o requestchoice requestchoice.o $(LIBS)
 
-executecmd : executecmd.o drawinfo.o
-	$(CC) -o executecmd executecmd.o drawinfo.o $(LIBS)
+executecmd : executecmd.o lib
+	$(CC) -o executecmd executecmd.o $(LIBS)
+
+Keyboard : kbdmodule.o kbdlexer.o lib
+	$(CC) -o Keyboard kbdmodule.o kbdlexer.o $(LIBS)
 
 clean :
-	$(RM) core $(PROGS) *.o
+	$(RM) core $(PROGS) $(LIBAMI) *.o libami/*.o
 	$(RM) lex.yy.c lex.c y.tab.c y.tab.h gram.h gram.c
+	$(RM) kbdlexer.c kbdmodule.h kbdmodule.c
 	$(RM) config.log
 
 distclean : clean
 	$(RM) config.status config.cache *~
+
+spotless : distclean
 
 TAGS:
 	etags *.c
@@ -90,20 +118,32 @@ dist : version.h clean
 	( version=`sed < version.h -e 's/^[^"]*"//' -e 's/"[^"]*$$//'`; \
 	  tarname="$(PACKAGENAME)$$version.tar"; \
 	  mkdir $(PACKAGENAME); \
-	  cp $(DISTFILES) $(PACKAGENAME)/; \
+	  tar cf - $(DISTFILES) | (cd $(PACKAGENAME)/; tar xf - ); \
 	  rm -f $$tarname $$tarname.gz; \
 	  tar cf $$tarname $(PACKAGENAME); \
 	  rm -rf $(PACKAGENAME)/; \
 	  gzip $$tarname; \
 	)
 
-$(srcdir)/configure: configure.in
+$(srcdir)/configure: $(srcdir)/configure.in
 	autoconf $(srcdir)/configure.in > $(srcdir)/configure
 
-depend: lex.c gram.c
+$(srcdir)/config.status: $(srcdir)/configure
+	( cd $(srcdir); ./configure )
+
+$(srcdir)/Makefile: $(srcdir)/Makefile.in $(srcdir)/config.status
+	( cd $(srcdir); ./config.status )
+
+$(srcdir)/libami/Makefile: $(srcdir)/libami/Makefile.in $(srcdir)/config.status
+	( cd $(srcdir); ./config.status )
+
+depend:: $(SRCS)
 	-@rm Makefile.bak
 	mv Makefile Makefile.bak
 	( sed '/^#--DO NOT REMOVE THIS LINE--$$/q' < Makefile.bak ; \
 	  $(CC) -MM $(ALL_CFLAGS) $(SRCS) ) > Makefile
+
+depend::
+	@( cd libami; $(MAKE) depend )
 
 #--DO NOT REMOVE THIS LINE--

@@ -14,8 +14,10 @@ void fixup_string(char *, char *);
 
 \#[^\n]*\n	{ ; }
 
-\"([^"\n\\]|\\.)*\"	{ fixup_string(yytext, yytext); yylval.ptr=yytext;
+\"([^"\n\\]|\\[.\n])*\"	{ fixup_string(yytext, yytext); yylval.ptr=yytext;
 			  return STRING; }
+
+[0-9]+ { yylval.num=atoi(yytext); return NUMBER; }
 
 [a-zA-Z]+	{ int token = parse_keyword(yytext);
 		  if(token == ERRORTOKEN) {
@@ -25,6 +27,10 @@ void fixup_string(char *, char *);
 		  } else
 		    return token;
 		}
+
+\{		{ return LEFTBRACE; }
+
+\}		{ return RIGHTBRACE; }
 
 [\r\n\t ]	{ ; }
 

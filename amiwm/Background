@@ -1,0 +1,6 @@
+#!/bin/sh
+if [ "$3" = "0x00000000" ]; then
+  xloadimage -onroot $4 > /dev/null
+else
+  xloadimage -windowid "$3" $4 > /dev/null
+fi

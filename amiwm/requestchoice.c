@@ -36,7 +36,6 @@ struct line {
 
 Display *dpy;
 Window root, mainwin, textwin;
-Colormap wm_cmap;
 char *progname;
 GC gc;
 Pixmap stipple;
@@ -202,8 +201,7 @@ int main(int argc, char *argv[])
   }
   root = RootWindow(dpy, DefaultScreen(dpy));
   XGetWindowAttributes(dpy, root, &attr);
-  wm_cmap = attr.colormap;
-  init_dri(&dri, DefaultScreen(dpy), False);
+  init_dri(&dri, root, attr.colormap, False);
 
   split(argv[2], "\n", addline);
   for(x=3; x<argc; x++)

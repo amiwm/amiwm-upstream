@@ -2,3 +2,5 @@ FastQuit Off
 SizeBorder Right
 IconPalette MagicWB
 DefaultIcon "def_tool.info"
+Screen "Workbench Screen"
+Module "Keyboard" "Meta<M>:all:rotatescreens"

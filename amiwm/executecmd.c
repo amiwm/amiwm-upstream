@@ -42,7 +42,6 @@ char *progname;
 
 Display *dpy;
 
-Colormap wm_cmap;
 struct DrawInfo dri;
 
 Window root, mainwin, strwin;
@@ -270,8 +269,7 @@ int main(int argc, char *argv[])
   }
   root = RootWindow(dpy, DefaultScreen(dpy));
   XGetWindowAttributes(dpy, root, &attr);
-  wm_cmap = attr.colormap;
-  init_dri(&dri, DefaultScreen(dpy), False);
+  init_dri(&dri, root, attr.colormap, False);
 
   strgadw=VISIBLE_CMD_CHARS*dri.dri_Font->max_bounds.width+12;
   strgadh=(fh=dri.dri_Font->ascent+dri.dri_Font->descent)+6;

@@ -75,6 +75,46 @@ ToolItem "name" "command"
 Adds an item in the Tools menu with the specified name, which executes
 the command when selected.
 
+ToolItem Separator
+
+Inserts a separator bar in the Tools menu.
+
+ToolItem "name" { <tool item commands> }
+
+Create ToolItem:s in a submenu with the specified name.  It is not legal
+to create a submenu inside another submenu.
+
+Screen "name"
+
+Create a new screen with the specified name.  It will be placed below all
+earlier created screens.  To move a window between two screens, iconify it
+and drag the icon over to the other screen.
+
+ModulePath "path(:path...)"
+
+Sets one or more directories where amiwm will look for module binaries.
+The default is AMIWM_HOME.  Note that the module binaries cannot be
+shared amongst different architectures.
+
+Module "name" ["initstring"]
+
+Start a module with the specified name.  If initstring is specified, it
+is sent to the module.  There are currently two modules shipped with
+amiwm; Background and Keyboard.  These are documented in the file
+README.modules.  If a module is limited to a single screen, like the
+Background module, the screen that was created last is used.
+
+InterScreenGap number
+
+Sets the size in number of pixels of the "video DMA off" area that appears
+between screens when they are dragged.
+
+AutoRaise {yes|no}
+
+Selects wheteher windows will automatically be moved to the front when
+they are activated.
+
+
 4. Troubleshooting
 
 The most likely reason for the windowmanager to crash is if it

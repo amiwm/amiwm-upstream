@@ -6,17 +6,17 @@
 
 typedef struct _Client {
   struct _Client *next;
-  Window window, parent, iconwin, iconlabelwin;
-  Window close, drag, icon, zoom, depth, resize;
+  Scrn *scr;
+  struct _Icon *icon;
+  Window window, parent;
+  Window close, drag, iconify, zoom, depth, resize;
   Window clicked;
-  GC gc;
   Colormap colormap;
-  Pixmap iconpm;
-  int x, y, pwidth, pheight, dragw, framewidth, frameheight, iconlabelwidth;
+  int x, y, pwidth, pheight, dragw, framewidth, frameheight;
   int zoomx, zoomy, zoomw, zoomh;
   int old_bw, proto, state, gravity, reparenting;
   int active;
-  XTextProperty title, iconlabel;
+  XTextProperty title;
   XSizeHints sizehints;
 } Client;
 

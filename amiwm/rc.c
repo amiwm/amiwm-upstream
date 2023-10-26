@@ -3,6 +3,8 @@
 
 #include "alloc.h"
 #include "prefs.h"
+#include "drawinfo.h"
+#include "screen.h"
 #include "gram.h"
 #include "icc.h"
 
@@ -27,7 +29,9 @@ void read_rc_file()
   memset(prefs, 0, sizeof(prefs));
   prefs.sizeborder=Psizeright;
   prefs.icondir=AMIWM_HOME;
+  prefs.module_path=AMIWM_HOME;
   prefs.defaulticon="def_tool.info";
+  prefs.borderwidth=1;
   set_sys_palette();
   home=getenv("HOME");
 #ifdef AMIGAOS
@@ -39,6 +43,7 @@ void read_rc_file()
     if(rcfile=fopen(fn, "r")) {
       yyparse();
       fclose(rcfile);
+      rcfile=NULL;
       return;
     }
   }
@@ -71,6 +76,7 @@ void read_rc_file()
 struct keyword { char *name; int token; } keywords[] = {
   { "always", ALWAYS },
   { "auto", AUTO },
+  { "autoraise", AUTORAISE },
   { "backgroundpen", T_BACKGROUNDPEN },
   { "barblockpen", T_BARBLOCKPEN },
   { "bardetailpen", T_BARDETAILPEN },
@@ -89,14 +95,19 @@ struct keyword { char *name; int token; } keywords[] = {
   { "icondir", ICONDIR },
   { "iconfont", ICONFONT },
   { "iconpalette", ICONPALETTE },
+  { "interscreengap", INTERSCREENGAP },
   { "magicwb", MAGICWB },
   { "manual", MANUAL },
+  { "module", MODULE },
+  { "modulepath", MODULEPATH },
   { "no", NO },
   { "none", NONE },
   { "off", NO },
   { "on", YES },
   { "right", RIGHT },
+  { "screen", SCREEN },
   { "screenfont", SCREENFONT },
+  { "separator", SEPARATOR },
   { "shadowpen", T_SHADOWPEN },
   { "shinepen", T_SHINEPEN },
   { "sizeborder", SIZEBORDER },

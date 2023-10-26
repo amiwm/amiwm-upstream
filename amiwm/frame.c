@@ -3,9 +3,12 @@
 #include <stdlib.h>
 
 #include "drawinfo.h"
+#include "screen.h"
+#include "icon.h"
 #include "client.h"
 #include "icc.h"
 #include "prefs.h"
+#include "module.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -15,33 +18,32 @@ extern struct Library *XLibBase;
 #define mx(a,b) ((a)>(b)?(a):(b))
 
 extern Display *dpy;
-extern Window root;
-extern struct DrawInfo dri;
-extern int fh,bh,h2,h3,h4,h5,h6,h7,h8;
+extern XContext client_context;
 
-Window creategadget(Window p, int x, int y, int w, int h)
+Window creategadget(Client *c, Window p, int x, int y, int w, int h)
 {
   XSetWindowAttributes attr;
   Window r;
 
   attr.override_redirect=True;
-  attr.background_pixel=dri.dri_Pens[BACKGROUNDPEN];
+  attr.background_pixel=scr->dri.dri_Pens[BACKGROUNDPEN];
   r=XCreateWindow(dpy, p, x, y, w, h, 0, CopyFromParent, InputOutput,
 		  CopyFromParent, CWOverrideRedirect|CWBackPixel, &attr);
   XSelectInput(dpy, r, ExposureMask|ButtonPressMask|ButtonReleaseMask|
 	       EnterWindowMask|LeaveWindowMask);
+  XSaveContext(dpy, r, client_context, (XPointer)c);
   return r;
 }
 
 void spread_top_gadgets(Client *c)
 {
   if(c->zoom) {
-    XResizeWindow(dpy, c->drag, c->dragw=mx(4, c->pwidth-23-23-23-19), bh);
-    XMoveWindow(dpy, c->icon, c->pwidth-23-23-23, 0);
+    XResizeWindow(dpy, c->drag, c->dragw=mx(4, c->pwidth-23-23-23-19), scr->bh);
+    XMoveWindow(dpy, c->iconify, c->pwidth-23-23-23, 0);
     XMoveWindow(dpy, c->zoom, c->pwidth-23-23, 0);
   } else {
-    XResizeWindow(dpy, c->drag, c->dragw=mx(4, c->pwidth-23-23-19), bh);
-    XMoveWindow(dpy, c->icon, c->pwidth-23-23, 0);
+    XResizeWindow(dpy, c->drag, c->dragw=mx(4, c->pwidth-23-23-19), scr->bh);
+    XMoveWindow(dpy, c->iconify, c->pwidth-23-23, 0);
   }
   XMoveWindow(dpy, c->depth, c->pwidth-23, 0);
 }
@@ -69,7 +71,7 @@ void setclientborder(Client *c, int old, int new)
   }
   c->proto = (c->proto&~(Psizeright|Psizebottom|Psizetrans)) | new;
   c->framewidth=((new&Psizeright)?22:8);
-  c->frameheight=bh+((new&Psizebottom)?10:2);
+  c->frameheight=scr->bh+((new&Psizebottom)?10:2);
   if(c->gravity==EastGravity || c->gravity==NorthEastGravity ||
      c->gravity==SouthEastGravity)
     x-=(c->pwidth-oldpw);
@@ -108,13 +110,35 @@ static int resizable(XSizeHints *xsh)
   return r;
 }
 
+extern unsigned int meta_mask;
+
 void reparent(Client *c)
 {
   XWindowAttributes attr;
   XSetWindowAttributes attr2;
+  XTextProperty screen_prop;
+  Scrn *s=scr;
   int cb;
+  Window leader;
+  Client *lc;
+  struct mcmd_keygrab *kg;
+  extern struct mcmd_keygrab *keygrabs;
 
-  if(c->parent && c->parent != root)
+  if(XGetTransientForHint(dpy, c->window, &leader) &&
+     !XFindContext(dpy, leader, client_context, (XPointer *)&lc))
+    c->scr = lc->scr;
+  else if(XGetTextProperty(dpy, c->window, &screen_prop, amiwm_screen)) {
+    do {
+      if((!s->deftitle[screen_prop.nitems])&&!strncmp(s->deftitle,
+						      screen_prop.value))
+	break;
+      s=s->behind;
+    } while(s!=scr);
+    XFree(screen_prop.value);
+    c->scr=s;
+  }
+  scr=c->scr;
+  if(c->parent && c->parent != scr->root)
     return;
   getproto(c);
   XAddToSaveSet(dpy, c->window);
@@ -122,37 +146,39 @@ void reparent(Client *c)
   c->colormap = attr.colormap;
   c->old_bw = attr.border_width;
   c->framewidth=8;
-  c->frameheight=bh+2;
+  c->frameheight=scr->bh+2;
   attr2.override_redirect=True;
   grav_map_win_to_frame(c, attr.x, attr.y, &c->x, &c->y);
-  c->parent=XCreateWindow(dpy, root, c->x, c->y,
-			  c->pwidth=attr.width+8, c->pheight=attr.height+2+bh,
+  c->parent=XCreateWindow(dpy, scr->back, c->x, c->y,
+			  c->pwidth=attr.width+8, c->pheight=attr.height+2+scr->bh,
 			  0, CopyFromParent, InputOutput, CopyFromParent,
 			  CWOverrideRedirect, &attr2);
-  XSetWindowBackground(dpy, c->parent, dri.dri_Pens[BACKGROUNDPEN]);
+  XSaveContext(dpy, c->parent, client_context, (XPointer)c);
+  XSetWindowBackground(dpy, c->parent, scr->dri.dri_Pens[BACKGROUNDPEN]);
   XSetWindowBorderWidth(dpy, c->window, 0);
-  XSelectInput(dpy, c->parent, SubstructureRedirectMask |
-	       SubstructureNotifyMask | ExposureMask |
-	       EnterWindowMask | LeaveWindowMask | ButtonPressMask |
-	       ButtonReleaseMask);
-  XReparentWindow(dpy, c->window, c->parent, 4, bh);
+  XReparentWindow(dpy, c->window, c->parent, 4, scr->bh);
   XSelectInput(dpy, c->window, EnterWindowMask | LeaveWindowMask |
 	       ColormapChangeMask | PropertyChangeMask);
+  XSelectInput(dpy, c->parent, SubstructureRedirectMask |
+	       SubstructureNotifyMask | ExposureMask |
+	       EnterWindowMask | LeaveWindowMask | ButtonPressMask);
+  for(kg=keygrabs; kg; kg=kg->next)
+    XGrabKey(dpy, kg->keycode, kg->modifiers, c->window, False, GrabModeAsync,
+	     GrabModeAsync);
   cb=(resizable(&c->sizehints)? prefs.sizeborder:0);
-  c->close=creategadget(c->parent, 0, 0, 19, bh);
-  c->drag=creategadget(c->parent, 19, 0, 1, 1);
-  c->icon=creategadget(c->parent, 0, 0, 23, bh);
+  c->close=creategadget(c, c->parent, 0, 0, 19, scr->bh);
+  c->drag=creategadget(c, c->parent, 19, 0, 1, 1);
+  c->iconify=creategadget(c, c->parent, 0, 0, 23, scr->bh);
   if(cb)
-    c->zoom=creategadget(c->parent, 0, 0, 23, bh);
-  c->depth=creategadget(c->parent, 0, 0, 23, bh);
+    c->zoom=creategadget(c, c->parent, 0, 0, 23, scr->bh);
+  c->depth=creategadget(c, c->parent, 0, 0, 23, scr->bh);
   spread_top_gadgets(c);
   setclientborder(c, 0, cb);
   if(cb)
-    c->resize=creategadget(c->parent, c->pwidth-18, c->pheight-10, 18, 10);
+    c->resize=creategadget(c, c->parent, c->pwidth-18, c->pheight-10, 18, 10);
   XMapSubwindows(dpy, c->parent);
-  c->gc = XCreateGC(dpy, c->parent, 0, NULL);
-  XSetFont(dpy, c->gc, dri.dri_Font->fid);
   sendconfig(c);
+  setstringprop(c->window, amiwm_screen, scr->deftitle);
 }
 
 void redraw(Client *c, Window w)
@@ -161,139 +187,141 @@ void redraw(Client *c, Window w)
     int x, y;
     x=c->pwidth-((c->proto&Psizeright)?18:4);
     y=c->pheight-((c->proto&Psizebottom)?10:2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 0, c->pwidth-1, 0);
-    XDrawLine(dpy, w, c->gc, 0, 0, 0, c->pheight-1);
-    XDrawLine(dpy, w, c->gc, 4, y, x, y);
-    XDrawLine(dpy, w, c->gc, x, bh, x, y);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawLine(dpy, w, c->gc, 1, c->pheight-1, c->pwidth-1, c->pheight-1);
-    XDrawLine(dpy, w, c->gc, c->pwidth-1, 1, c->pwidth-1, c->pheight-1);
-    XDrawLine(dpy, w, c->gc, 3, bh-1, 3, y);
-    XDrawLine(dpy, w, c->gc, 3, bh-1, x, bh-1);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 0, c->pwidth-1, 0);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 0, c->pheight-1);
+    XDrawLine(dpy, w, scr->gc, 4, y, x, y);
+    XDrawLine(dpy, w, scr->gc, x, scr->bh, x, y);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawLine(dpy, w, scr->gc, 1, c->pheight-1, c->pwidth-1, c->pheight-1);
+    XDrawLine(dpy, w, scr->gc, c->pwidth-1, 1, c->pwidth-1, c->pheight-1);
+    XDrawLine(dpy, w, scr->gc, 3, scr->bh-1, 3, y);
+    XDrawLine(dpy, w, scr->gc, 3, scr->bh-1, x, scr->bh-1);
   } else if(w==c->close) {
     if(c->active) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-      XFillRectangle(dpy, w, c->gc, 7, h3, 4, h7-h3);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+      XFillRectangle(dpy, w, scr->gc, 7, scr->h3, 4, scr->h7-scr->h3);
     }
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawRectangle(dpy, w, c->gc, 7, h3, 4, h7-h3);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawRectangle(dpy, w, scr->gc, 7, scr->h3, 4, scr->h7-scr->h3);
     if(c->clicked==w) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-      XDrawLine(dpy, w, c->gc, 0, 0, 18, 0);
-      XDrawLine(dpy, w, c->gc, 0, 0, 0, bh-2);
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-      XDrawLine(dpy, w, c->gc, 0, bh-1, 18, bh-1);
-      XDrawLine(dpy, w, c->gc, 18, 1, 18, bh-1);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+      XDrawLine(dpy, w, scr->gc, 0, 0, 18, 0);
+      XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+      XDrawLine(dpy, w, scr->gc, 0, scr->bh-1, 18, scr->bh-1);
+      XDrawLine(dpy, w, scr->gc, 18, 1, 18, scr->bh-1);
     } else {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-      XDrawLine(dpy, w, c->gc, 0, 0, 18, 0);
-      XDrawLine(dpy, w, c->gc, 0, 0, 0, bh-1);
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-      XDrawLine(dpy, w, c->gc, 1, bh-1, 18, bh-1);
-      XDrawLine(dpy, w, c->gc, 18, 1, 18, bh-1);    
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+      XDrawLine(dpy, w, scr->gc, 0, 0, 18, 0);
+      XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-1);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+      XDrawLine(dpy, w, scr->gc, 1, scr->bh-1, 18, scr->bh-1);
+      XDrawLine(dpy, w, scr->gc, 18, 1, 18, scr->bh-1);    
     }
   } else if(w==c->drag) {
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->active?FILLTEXTPEN:TEXTPEN]);
-    XSetBackground(dpy, c->gc, dri.dri_Pens[c->active?FILLPEN:BACKGROUNDPEN]);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->active?FILLTEXTPEN:TEXTPEN]);
+    XSetBackground(dpy, scr->gc, scr->dri.dri_Pens[c->active?FILLPEN:BACKGROUNDPEN]);
     if(c->title.value)
-      XDrawImageString(dpy, w, c->gc, 11, 1+dri.dri_Font->ascent,
+      XDrawImageString(dpy, w, scr->gc, 11, 1+scr->dri.dri_Font->ascent,
 		       c->title.value, c->title.nitems);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 0, c->dragw-1, 0);
-    XDrawLine(dpy, w, c->gc, 0, 0, 0, bh-2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawLine(dpy, w, c->gc, 0, bh-1, c->dragw-1, bh-1);
-    XDrawLine(dpy, w, c->gc, c->dragw-1, 1, c->dragw-1, bh-1);
-  } else if(w==c->icon) {
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 0, c->dragw-1, 0);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, scr->bh-1, c->dragw-1, scr->bh-1);
+    XDrawLine(dpy, w, scr->gc, c->dragw-1, 1, c->dragw-1, scr->bh-1);
+  } else if(w==c->iconify) {
     if(c->active) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-      XFillRectangle(dpy, w, c->gc, 7, h8-4, 4, 2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+      XFillRectangle(dpy, w, scr->gc, 7, scr->h8-4, 4, 2);
     }
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawRectangle(dpy, w, c->gc, 7, h8-4, 4, 2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawRectangle(dpy, w, scr->gc, 7, scr->h8-4, 4, 2);
     if(c->clicked==w) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[c->active? FILLPEN:BACKGROUNDPEN]);
-      XDrawRectangle(dpy, w, c->gc, 5, h2, 12, h8-h2);
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-      XDrawRectangle(dpy, w, c->gc, 5, h8-(bh>11? 7:6), 9, (bh>11? 7:6));
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->active? FILLPEN:BACKGROUNDPEN]);
+      XDrawRectangle(dpy, w, scr->gc, 5, scr->h2, 12, scr->h8-scr->h2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+      XDrawRectangle(dpy, w, scr->gc, 5, scr->h8-(scr->bh>11? 7:6), 9, (scr->bh>11? 7:6));
     } else {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[c->active? FILLPEN:BACKGROUNDPEN]);
-      XDrawRectangle(dpy, w, c->gc, 5, h8-(bh>11? 7:6), 9, (bh>11? 7:6));
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-      XDrawRectangle(dpy, w, c->gc, 5, h2, 12, h8-h2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->active? FILLPEN:BACKGROUNDPEN]);
+      XDrawRectangle(dpy, w, scr->gc, 5, scr->h8-(scr->bh>11? 7:6), 9, (scr->bh>11? 7:6));
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+      XDrawRectangle(dpy, w, scr->gc, 5, scr->h2, 12, scr->h8-scr->h2);
     }
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w?SHADOWPEN:SHINEPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 0, 22, 0);
-    XDrawLine(dpy, w, c->gc, 0, 0, 0, bh-2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w?SHINEPEN:SHADOWPEN]);
-    XDrawLine(dpy, w, c->gc, 0, bh-1, 22, bh-1);
-    XDrawLine(dpy, w, c->gc, 22, 0, 22, bh-1);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w?SHADOWPEN:SHINEPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 22, 0);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w?SHINEPEN:SHADOWPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, scr->bh-1, 22, scr->bh-1);
+    XDrawLine(dpy, w, scr->gc, 22, 0, 22, scr->bh-1);
   } else if(w==c->zoom) {
     if(c->active) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w? SHINEPEN:FILLPEN]);
-      XFillRectangle(dpy, w, c->gc, 5, h2, 12, h8-h2);
-      XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w? FILLPEN:SHINEPEN]);
-      XFillRectangle(dpy, w, c->gc, 6, h2, 5, h5-h2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w? SHINEPEN:FILLPEN]);
+      XFillRectangle(dpy, w, scr->gc, 5, scr->h2, 12, scr->h8-scr->h2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w? FILLPEN:SHINEPEN]);
+      XFillRectangle(dpy, w, scr->gc, 6, scr->h2, 5, scr->h5-scr->h2);
     }
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawRectangle(dpy, w, c->gc, 6, h2, 5, h5-h2);
-    XDrawRectangle(dpy, w, c->gc, 5, h2, 7, h5-h2);
-    XDrawRectangle(dpy, w, c->gc, 5, h2, 12, h8-h2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w? SHADOWPEN:SHINEPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 0, 22, 0);
-    XDrawLine(dpy, w, c->gc, 0, 0, 0, bh-2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w? SHINEPEN:SHADOWPEN]);
-    XDrawLine(dpy, w, c->gc, 0, bh-1, 22, bh-1);
-    XDrawLine(dpy, w, c->gc, 22, 0, 22, bh-1);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawRectangle(dpy, w, scr->gc, 6, scr->h2, 5, scr->h5-scr->h2);
+    XDrawRectangle(dpy, w, scr->gc, 5, scr->h2, 7, scr->h5-scr->h2);
+    XDrawRectangle(dpy, w, scr->gc, 5, scr->h2, 12, scr->h8-scr->h2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w? SHADOWPEN:SHINEPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 22, 0);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w? SHINEPEN:SHADOWPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, scr->bh-1, 22, scr->bh-1);
+    XDrawLine(dpy, w, scr->gc, 22, 0, 22, scr->bh-1);
   } else if(w==c->depth) {
     if(c->active) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[BACKGROUNDPEN]);
-      XFillRectangle(dpy, w, c->gc, 4, h2, 10, h6-h2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[BACKGROUNDPEN]);
+      XFillRectangle(dpy, w, scr->gc, 4, scr->h2, 10, scr->h6-scr->h2);
     }
     if(c->clicked!=w) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-      XDrawRectangle(dpy, w, c->gc, 4, h2, 10, h6-h2);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+      XDrawRectangle(dpy, w, scr->gc, 4, scr->h2, 10, scr->h6-scr->h2);
     }
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->active?SHINEPEN:BACKGROUNDPEN]);
-    XFillRectangle(dpy, w, c->gc, 8, h4, 10, h8-h4);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawRectangle(dpy, w, c->gc, 8, h4, 10, h8-h4);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->active?SHINEPEN:BACKGROUNDPEN]);
+    XFillRectangle(dpy, w, scr->gc, 8, scr->h4, 10, scr->h8-scr->h4);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawRectangle(dpy, w, scr->gc, 8, scr->h4, 10, scr->h8-scr->h4);
     if(c->clicked==w)
-      XDrawRectangle(dpy, w, c->gc, 4, h2, 10, h6-h2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w? SHADOWPEN:SHINEPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 0, 22, 0);
-    XDrawLine(dpy, w, c->gc, 0, 0, 0, bh-2);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[c->clicked==w? SHINEPEN:SHADOWPEN]);
-    XDrawLine(dpy, w, c->gc, 0, bh-1, 22, bh-1);
-    XDrawLine(dpy, w, c->gc, 22, 0, 22, bh-1);
+      XDrawRectangle(dpy, w, scr->gc, 4, scr->h2, 10, scr->h6-scr->h2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w? SHADOWPEN:SHINEPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 22, 0);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->clicked==w? SHINEPEN:SHADOWPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, scr->bh-1, 22, scr->bh-1);
+    XDrawLine(dpy, w, scr->gc, 22, 0, 22, scr->bh-1);
   } else if(w==c->resize) {
     static XPoint points[]={{4,6},{13,2},{14,2},{14,7},{4,7}};
     if(c->active) {
-      XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-      XFillPolygon(dpy, w, c->gc, points, sizeof(points)/sizeof(points[0]), Convex, CoordModeOrigin);
+      XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+      XFillPolygon(dpy, w, scr->gc, points, sizeof(points)/sizeof(points[0]), Convex, CoordModeOrigin);
     }
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawLines(dpy, w, c->gc, points, sizeof(points)/sizeof(points[0]), CoordModeOrigin);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHINEPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 0, 16, 0);
-    XDrawLine(dpy, w, c->gc, 0, 0, 0, 8);
-    XSetForeground(dpy, c->gc, dri.dri_Pens[SHADOWPEN]);
-    XDrawLine(dpy, w, c->gc, 0, 9, 17, 9);
-    XDrawLine(dpy, w, c->gc, 17, 0, 17, 9);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawLines(dpy, w, scr->gc, points, sizeof(points)/sizeof(points[0]), CoordModeOrigin);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 16, 0);
+    XDrawLine(dpy, w, scr->gc, 0, 0, 0, 8);
+    XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
+    XDrawLine(dpy, w, scr->gc, 0, 9, 17, 9);
+    XDrawLine(dpy, w, scr->gc, 17, 0, 17, 9);
   }
 }
 
 void redrawclient(Client *c)
 {
-  unsigned long bgpix=dri.dri_Pens[c->active?FILLPEN:BACKGROUNDPEN];
+  unsigned long bgpix;
 
-  if((!c->parent) || c->parent == root)
+  scr=c->scr;
+  if((!c->parent) || c->parent == scr->root)
     return;
+  bgpix=scr->dri.dri_Pens[c->active?FILLPEN:BACKGROUNDPEN];
   XSetWindowBackground(dpy, c->parent, bgpix);
   XSetWindowBackground(dpy, c->close, bgpix);
   XSetWindowBackground(dpy, c->drag, bgpix);
-  XSetWindowBackground(dpy, c->icon, bgpix);
+  XSetWindowBackground(dpy, c->iconify, bgpix);
   if(c->zoom)
     XSetWindowBackground(dpy, c->zoom, bgpix);
   XSetWindowBackground(dpy, c->depth, bgpix);
@@ -302,7 +330,7 @@ void redrawclient(Client *c)
   XClearWindow(dpy, c->parent);
   XClearWindow(dpy, c->close);
   XClearWindow(dpy, c->drag);
-  XClearWindow(dpy, c->icon);
+  XClearWindow(dpy, c->iconify);
   if(c->zoom)
     XClearWindow(dpy, c->zoom);
   XClearWindow(dpy, c->depth);
@@ -311,7 +339,7 @@ void redrawclient(Client *c)
   redraw(c, c->parent);
   redraw(c, c->close);
   redraw(c, c->drag);
-  redraw(c, c->icon);
+  redraw(c, c->iconify);
   if(c->zoom)
     redraw(c, c->zoom);
   redraw(c, c->depth);
@@ -321,26 +349,41 @@ void redrawclient(Client *c)
 
 extern Client *clickclient;
 extern Window clickwindow;
+extern Scrn *mbdclick, *mbdscr;
 
 void clickenter()
 {
-  redraw(clickclient, clickclient->clicked=clickwindow);
+  if((scr=mbdscr)&& clickwindow == scr->menubardepth) {
+    mbdclick = scr;
+    redrawmenubar(scr->menubardepth);
+  } else {
+    scr = clickclient->scr;
+    redraw(clickclient, clickclient->clicked=clickwindow);
+  }
 }
 
 void clickleave()
 {
-  clickclient->clicked=None;
-  redraw(clickclient, clickwindow);
+  if((scr=mbdscr)&& clickwindow == scr->menubardepth) {
+    mbdclick = NULL;
+    redrawmenubar(scr->menubardepth);
+  } else {
+    scr = clickclient->scr;
+    clickclient->clicked=None;
+    redraw(clickclient, clickwindow);
+  }
 }
 
 void gadgetclicked(Client *c, Window w, XEvent *e)
 {
+  scr=c->scr;
   redraw(c, clickwindow=(clickclient=c)->clicked=w);
 }
 
 void gadgetaborted(Client *c)
 {
   Window w;
+  scr=c->scr;
   if(w=c->clicked) {
     c->clicked=None;
     redraw(c, w);
@@ -349,11 +392,38 @@ void gadgetaborted(Client *c)
   clickclient=NULL;
 }
 
+void raiselowerclient(Client *c, int place)
+{
+  Client *c2;
+  Window r,p,*children;
+  unsigned int nchildren;
+  if(place!=PlaceOnTop &&
+     XQueryTree(dpy, scr->back, &r, &p, &children, &nchildren)) {
+    if(place==PlaceOnBottom || children[nchildren-1]==c->parent ||
+       children[nchildren-1]==c->window) {
+      int n;
+      for(n=0; n<nchildren; n++)
+	if((!XFindContext(dpy, children[n], client_context, (XPointer*)&c2)) &&
+	   children[n]==c2->parent)
+	  break;
+      if(n<nchildren) {
+	Window ws[2];
+	ws[0]=children[n];
+	ws[1]=c->parent;
+	XRestackWindows(dpy, ws, 2);
+      }
+    } else
+      XRaiseWindow(dpy, c->parent);
+    if(children) XFree(children);
+  } else XRaiseWindow(dpy, c->parent);
+}
+
 void gadgetunclicked(Client *c, XEvent *e)
 {
   extern void createicon(Client *);
-  extern void adjusticon(Client *);
+  extern void adjusticon(Icon *);
   Window w;
+  scr=c->scr;
   if(w=c->clicked) {
     c->clicked=None;
     redraw(c, w);
@@ -362,28 +432,9 @@ void gadgetunclicked(Client *c, XEvent *e)
 	sendcmessage(c->window, wm_protocols, wm_delete);
       else
 	XKillClient(dpy, c->window);
-    } else if(w==c->depth) {
-      Client *c2;
-      Window r,p,*children;
-      unsigned int nchildren;
-      if(XQueryTree(dpy, root, &r, &p, &children, &nchildren)) {
-	if(children[nchildren-1]==c->parent ||
-	   children[nchildren-1]==c->window) {
-	  int n;
-	  for(n=0; n<nchildren; n++)
-	    if((c2=getclient(children[n])) && children[n]==c2->parent)
-	      break;
-	  if(n<nchildren) {
-	    Window ws[2];
-	    ws[0]=children[n];
-	    ws[1]=c->parent;
-	    XRestackWindows(dpy, ws, 2);
-	  }
-	} else
-	  XRaiseWindow(dpy, c->parent);
-	if(children) XFree(children);
-      } else XRaiseWindow(dpy, c->parent);
-    } else if(w==c->zoom) {
+    } else if(w==c->depth)
+      raiselowerclient(c, -1);
+    else if(w==c->zoom) {
       XWindowAttributes xwa;
       XGetWindowAttributes(dpy, c->parent, &xwa);
       XMoveWindow(dpy, c->parent, c->x=c->zoomx, c->y=c->zoomy);
@@ -392,14 +443,16 @@ void gadgetunclicked(Client *c, XEvent *e)
       c->zoomy=xwa.y;
       c->zoomw=xwa.width-c->framewidth;
       c->zoomh=xwa.height-c->frameheight;
-/*      XWarpPointer(dpy, None, c->zoom, 0, 0, 0, 0, 23/2, h5);  */
+/*      XWarpPointer(dpy, None, c->zoom, 0, 0, 0, 0, 23/2, scr->h5);  */
       sendconfig(c);
-    } else if(w==c->icon) {
-      if(!(c->iconwin))
+    } else if(w==c->iconify) {
+      if(!(c->icon))
 	createicon(c);
       XUnmapWindow(dpy, c->parent);
-      adjusticon(c);
-      XMapWindow(dpy, c->iconwin);
+      XUnmapWindow(dpy, c->window);
+      adjusticon(c->icon);
+      XMapWindow(dpy, c->icon->window);
+      XMapWindow(dpy, c->icon->labelwin);
       setclientstate(c, IconicState);
     }
   }

@@ -14,6 +14,7 @@
 #include "alloc.h"
 #include "drawinfo.h"
 #include "prefs.h"
+#include "screen.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -21,14 +22,7 @@ extern struct Library *XLibBase;
 #endif
 
 extern Display *dpy;
-extern struct DrawInfo dri;
-extern Window root;
-extern int rootdepth;
-extern Visual *rootvisual;
-extern Colormap wm_cmap;
 extern char *progname;
-
-extern GC menubargc;
 
 unsigned long iconcolor[8];
 
@@ -108,13 +102,14 @@ static INT16 swap16(INT16 x)
   return ((x&0xff)<<8)|((x&0xff00)>>8);
 }
 
-static Pixmap int_load_do(const char *filename)
+static Pixmap int_load_do(const char *filename, int sel)
 {
   struct DiskObject dobj;
   struct Image im;
   Pixmap pm;
   int fd, bitmap_pad, x, y, lame_byteorder=0;
   char *foo_data;
+  int bpr, imgsz;
 
   if((fd=open(filename, O_RDONLY))>=0) {
     if(sizeof(dobj)==read(fd, &dobj, sizeof(dobj)) &&
@@ -123,19 +118,28 @@ static Pixmap int_load_do(const char *filename)
 	   ((CARD16)swap16((INT16)dobj.do_Version))==WB_DISKVERSION &&
 	   (lame_byteorder=1))) &&
        lseek(fd, ((dobj.do_Type==WBDISK||dobj.do_Type==WBDRAWER||
-		   dobj.do_Type==WBGARBAGE)?(0x4e)+0x38:0x4e), SEEK_SET)>=0 &&
-       sizeof(im)==read(fd, &im, sizeof(im))) {
+		   dobj.do_Type==WBGARBAGE)?(0x4e)+0x38:0x4e), SEEK_SET)>=0) {
       if(lame_byteorder) {
 	dobj.do_Gadget.Width=swap16(dobj.do_Gadget.Width);
 	dobj.do_Gadget.Height=swap16(dobj.do_Gadget.Height);
+      }
+    for(;;) {
+      if(sizeof(im)!=read(fd, &im, sizeof(im))) {
+	close(fd);
+	return None;
+      }
+      if(lame_byteorder) {
 	im.LeftEdge=swap16(im.LeftEdge);
 	im.TopEdge=swap16(im.TopEdge);
 	im.Width=swap16(im.Width);
 	im.Height=swap16(im.Height);
 	im.Depth=swap16(im.Depth);
       }
-      {
-	int bpr=2*((im.Width+15)>>4), imgsz=bpr*im.Height*im.Depth;
+      bpr=2*((im.Width+15)>>4); imgsz=bpr*im.Height*im.Depth;
+      if(!(sel--)) break;
+      lseek(fd, imgsz, SEEK_CUR);
+    }
+      { 
 	XImage *ximg;
 #ifndef HAVE_ALLOCA
 	unsigned char *img=malloc(imgsz);
@@ -154,13 +158,13 @@ static Pixmap int_load_do(const char *filename)
 	  return None;
 	}
 	close(fd);
-	if (rootdepth > 16)
+	if (scr->depth > 16)
 	  bitmap_pad = 32;
-	else if (rootdepth > 8)
+	else if (scr->depth > 8)
 	  bitmap_pad = 16;
 	else
 	  bitmap_pad = 8;
-	ximg=XCreateImage(dpy, rootvisual, rootdepth, ZPixmap, 0, NULL,
+	ximg=XCreateImage(dpy, scr->visual, scr->depth, ZPixmap, 0, NULL,
 			  im.Width, im.Height, bitmap_pad, 0);
 #ifndef HAVE_ALLOCA
 	if(!(ximg->data = malloc(ximg->bytes_per_line * im.Height))) {
@@ -184,12 +188,12 @@ static Pixmap int_load_do(const char *filename)
 	    }
 	    XPutPixel(ximg, x, y, iconcolor[v&7]);
 	  }
-	pm=XCreatePixmap(dpy, root, dobj.do_Gadget.Width, dobj.do_Gadget.Height,
-			 rootdepth);
-	XSetForeground(dpy, menubargc, dri.dri_Pens[BACKGROUNDPEN]);
-	XFillRectangle(dpy, pm, menubargc, 0, 0,
+	pm=XCreatePixmap(dpy, scr->back, dobj.do_Gadget.Width, dobj.do_Gadget.Height,
+			 scr->depth);
+	XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[BACKGROUNDPEN]);
+	XFillRectangle(dpy, pm, scr->gc, 0, 0,
 		       dobj.do_Gadget.Width, dobj.do_Gadget.Height);
-	XPutImage(dpy, pm, menubargc, ximg, 0, 0, im.LeftEdge, im.TopEdge,
+	XPutImage(dpy, pm, scr->gc, ximg, 0, 0, im.LeftEdge, im.TopEdge,
 		  im.Width, im.Height);
 #ifndef HAVE_ALLOCA
 	free(ximg->data);
@@ -205,7 +209,7 @@ static Pixmap int_load_do(const char *filename)
   return None;
 }
 
-Pixmap load_do(const char *filename)
+void load_do(const char *filename, Pixmap *p1, Pixmap *p2)
 {
 #ifdef AMIGAOS
   char fn[256];
@@ -221,22 +225,23 @@ Pixmap load_do(const char *filename)
 #endif
   sprintf(fn, "%s/%s", prefs.icondir, filename);
 #endif
-  return int_load_do(fn);
+  *p1=int_load_do(fn,0);
+  *p2=int_load_do(fn,1);
 }
 
 void init_iconpalette()
 {
   extern Status myXAllocNamedColor(Display *, Colormap, char *, XColor *, XColor *);
-  XColor scr, xact;
+  XColor scrp, xact;
   char *name;
   int i;
 
   for(i=0; i<8; i++) {
-    if(!myXAllocNamedColor(dpy, wm_cmap, name = iconcolorname[i], &scr, &xact)) {
+    if(!myXAllocNamedColor(dpy, scr->cmap, name = iconcolorname[i], &scrp, &xact)) {
       fprintf(stderr, "%s: cannot allocate color %s\n", progname, name);
       exit(1);
     }
-    iconcolor[i]=scr.pixel;
+    iconcolor[i]=scrp.pixel;
   }
 }
 

@@ -16,7 +16,7 @@ be installed, usually /usr/local.  The binary will be installed
 in 'bindir' (default $prefix/bin) and the support files in 'AMIWM_HOME'
 (default $libdir/amiwm, which in turn defaults to $prefix/lib/amiwm).
 AMIWM_HOME must be set to a directory where amiwm will be able to
-find it's support files before you compile, event if you do not
+find it's support files before you compile, even if you do not
 intend to run 'make install'.
 
 3. Compile
@@ -34,17 +34,5 @@ If all the steps are successfull, you may then remove the source tree.
 AmigaOS
 -------
 
-1. Assign amiwm:
-
-Create a directory where you want amiwm installed and assign amiwm:
-to this directory.
-
-2. Compile
-
-Type 'smake', and hope that you have all the tools required to
-build amiwm...  :)
-
-3. Install
-
-Type 'smake install'.  All neccesary files will be copied to amiwm:.
+AmigaOS support is currently disfunctional.  Sorry.
 

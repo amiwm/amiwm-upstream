@@ -2,6 +2,9 @@
 #include <X11/Xutil.h>
 #include <stdlib.h>
 
+#include "drawinfo.h"
+#include "screen.h"
+#include "icon.h"
 #include "client.h"
 #include "icc.h"
 
@@ -11,33 +14,9 @@ extern struct Library *XLibBase;
 #endif
 
 extern Display *dpy;
-extern Window root;
-extern int bh;
+extern XContext client_context, screen_context;
 
 Client *clients=NULL;
-
-Client *getclient(Window w)
-{
-  Client *c;
-
-  if (w == 0 || w == root) return 0;
-  for (c = clients; c; c = c->next)
-    if (c->window == w || c->parent == w || c->close == w || c->drag == w ||
-	c->icon == w || c->zoom == w || c->depth == w || c->resize == w)
-      return c;
-  return 0;
-}
-
-Client *getclientbyicon(Window w)
-{
-  Client *c;
-  
-  if (w == 0 || w == root) return 0;
-  for (c = clients; c; c = c->next)
-    if (c->iconwin == w || c->iconlabelwin == w)
-      return c;
-  return 0;
-}
 
 void grav_map_frame_to_win(Client *c, int x0, int y0, int *x, int *y)
 {
@@ -64,7 +43,7 @@ void grav_map_frame_to_win(Client *c, int x0, int y0, int *x, int *y)
   case CenterGravity:
   case EastGravity:
   case WestGravity:
-    *y=y0+bh-c->old_bw; break;
+    *y=y0+c->scr->bh-c->old_bw; break;
   case NorthGravity:
   case NorthEastGravity:
   case NorthWestGravity:
@@ -98,7 +77,7 @@ void grav_map_win_to_frame(Client *c, int x0, int y0, int *x, int *y)
   case CenterGravity:
   case EastGravity:
   case WestGravity:
-    *y=y0-bh+c->old_bw; break;
+    *y=y0-c->scr->bh+c->old_bw; break;
   case NorthGravity:
   case NorthEastGravity:
   case NorthWestGravity:
@@ -109,7 +88,6 @@ void grav_map_win_to_frame(Client *c, int x0, int y0, int *x, int *y)
 
 void sendconfig(Client *c)
 {
-  extern int bh;
   XConfigureEvent ce;
 
   ce.type = ConfigureNotify;
@@ -119,13 +97,25 @@ void sendconfig(Client *c)
    grav_map_frame_to_win(c, c->x, c->y, &ce.x, &ce.y);
 */
   ce.x = c->x+4;
-  ce.y = c->y+bh;
+#ifndef ASSIMILATE_WINDOWS
+  ce.y = c->y+c->scr->bh+c->scr->y;
+#else
+  ce.y = c->y+c->scr->bh;
+#endif
   ce.width = c->pwidth-c->framewidth;
   ce.height = c->pheight-c->frameheight;
   ce.border_width = c->old_bw;
   ce.above = None;
   ce.override_redirect = 0;
   XSendEvent(dpy, c->window, False, StructureNotifyMask, (XEvent*)&ce);
+}
+
+void scrsendconfig(Scrn *s)
+{
+  Client *c;
+  for (c=clients; c; c = c->next)
+    if(c->scr == s)
+      sendconfig(c);
 }
 
 void checksizehints(Client *c)
@@ -174,18 +164,18 @@ void getstate(Client *c)
 
 Client *createclient(Window w)
 {
-  XWindowAttributes attr, attr2;
+  XWindowAttributes attr;
   Client *c;
-  extern int bh;
 
-  if(w==0 || w==root) return 0;
-  if(c=getclient(w)) return c;
+  if(w==0) return 0;
+  if(!XFindContext(dpy, w, client_context, (XPointer*)&c)) return c;
 
   XGetWindowAttributes(dpy, w, &attr);
 
   c = (Client *)calloc(1, sizeof(Client));
+  c->scr = scr;
   c->window = w;
-  c->parent = root;
+  c->parent = scr->root;
   c->old_bw = attr.border_width;
   c->next = clients;
   c->state = WithdrawnState;
@@ -195,9 +185,8 @@ Client *createclient(Window w)
   XGetWMName(dpy, c->window, &c->title);
   checksizehints(c);
   c->zoomx=c->zoomy=0;
-  XGetWindowAttributes(dpy, root, &attr2);
   if(c->sizehints.width_inc) {
-    c->zoomw=attr2.width-c->sizehints.base_width-22;
+    c->zoomw=scr->width-c->sizehints.base_width-22;
     c->zoomw-=c->zoomw%c->sizehints.width_inc;
     c->zoomw+=c->sizehints.base_width;
     if(c->zoomw>c->sizehints.max_width)
@@ -207,7 +196,7 @@ Client *createclient(Window w)
   } else
     c->zoomw=attr.width;
   if(c->sizehints.height_inc) {
-    c->zoomh=attr2.height-c->sizehints.base_height-bh-10;
+    c->zoomh=scr->height-c->sizehints.base_height-scr->bh-10;
     c->zoomh-=c->zoomh%c->sizehints.height_inc;
     c->zoomh+=c->sizehints.base_height;
     if(c->zoomh>c->sizehints.max_height)
@@ -216,6 +205,7 @@ Client *createclient(Window w)
       c->zoomh=c->sizehints.min_height;
   } else
     c->zoomh=attr.height;
+  XSaveContext(dpy, w, client_context, (XPointer)c);
   return clients = c;
 }
 
@@ -236,30 +226,26 @@ void rmclient(Client *c)
 
     if(c->title.value)
       XFree(c->title.value);
-    if(c->parent != root)
+    if(c->parent != c->scr->root) {
       XDestroyWindow(dpy, c->parent);
-    if(c->iconwin) {
-      Window r,p,*ch;
-      unsigned int nc;
-      if(XQueryTree(dpy, c->iconwin, &r, &p, &ch, &nc)) {
-	if(nc) {
-	  XWindowAttributes attr;
-	  XGetWindowAttributes(dpy, c->iconwin, &attr);
-	  while(nc--) {
-	    Window w=ch[nc];
-	    XUnmapWindow(dpy, w);
-	    XReparentWindow(dpy, w, root, attr.x+4, attr.y+4);
-	    XRemoveFromSaveSet(dpy, w);
-	  }
-	}
-	XFree(ch);
-      }
-      XDestroyWindow(dpy, c->iconwin);
+      XDeleteContext(dpy, c->parent, client_context);
     }
-    if(c->iconlabelwin)
-      XDestroyWindow(dpy, c->iconlabelwin);
-    if(c->iconlabel.value)
-      XFree(c->iconlabel.value);
+    if(c->close)
+      XDeleteContext(dpy, c->close, client_context);
+    if(c->drag)
+      XDeleteContext(dpy, c->drag, client_context);
+    if(c->iconify)
+      XDeleteContext(dpy, c->iconify, client_context);
+    if(c->zoom)
+      XDeleteContext(dpy, c->zoom, client_context);
+    if(c->depth)
+      XDeleteContext(dpy, c->depth, client_context);
+    if(c->resize)
+      XDeleteContext(dpy, c->resize, client_context);
+    if(c->icon)
+      rmicon(c->icon);
+    if(c->window)
+      XDeleteContext(dpy, c->window, client_context);
     free(c);
 }
 
@@ -268,34 +254,50 @@ void flushclients()
   unsigned int i, nwins;
   Window dw1, dw2, *wins;
   Client *c;
+  Scrn *scr2;
 
-  XQueryTree(dpy, root, &dw1, &dw2, &wins, &nwins);
-  for(i=0; i<nwins; i++)
-    if((c=getclient(wins[i]))&&wins[i]==c->parent) {
-      int x,y;
-      grav_map_frame_to_win(c, c->x, c->y, &x, &y);
-      XReparentWindow(dpy, c->window, root, x, y);
-      XSetWindowBorderWidth(dpy, c->window, c->old_bw);
-      XRemoveFromSaveSet(dpy, c->window);
-      wins[i]=c->window;
-      rmclient(c);
-    }
-/*
-  if(nwins) {
-    for(i=0; i<(nwins>>1); i++) {
+  if((scr = front)) do {
+    scr = scr->upfront;
+    XQueryTree(dpy, scr->back, &dw1, &dw2, &wins, &nwins);
+    for(i=0; i<nwins; i++)
+      if((!XFindContext(dpy, wins[i], client_context, (XPointer *)&c))&&wins[i]==c->parent) {
+	int x,y;
+	grav_map_frame_to_win(c, c->x, c->y, &x, &y);
+	XReparentWindow(dpy, c->window, scr->root, x, y);
+	XSetWindowBorderWidth(dpy, c->window, c->old_bw);
+	XRemoveFromSaveSet(dpy, c->window);
+	wins[i]=c->window;
+	rmclient(c);
+      }
+#ifdef ASSIMILATE_WINDOWS
+      else if((!XFindContext(dpy, wins[i], screen_context, (XPointer *)&scr2)) && scr2==scr) {
+	XWindowAttributes attr;
+	XSetWindowAttributes xsa;
+	XGetWindowAttributes(dpy, wins[i], &attr);
+	XReparentWindow(dpy, wins[i], scr->root, attr.x, attr.y);
+	xsa.override_redirect = True;
+	XChangeWindowAttributes(dpy, wins[i], CWOverrideRedirect, &xsa);
+	XDeleteContext(dpy, wins[i], screen_context);
+	XRemoveFromSaveSet(dpy, wins[i]);
+      }
+#endif
+    /*
+      if(nwins) {
+      for(i=0; i<(nwins>>1); i++) {
       Window w=wins[i];
       wins[i]=wins[nwins-1-i];
       wins[nwins-1-i]=w;
-    }
-    XRestackWindows(dpy, wins, nwins);
-  }
-*/
-  XFree((void *) wins);
+      }
+      XRestackWindows(dpy, wins, nwins);
+      }
+      */
+    XFree((void *) wins);
+  } while(scr!=front);
   while(c=clients) {
-    if(c->parent != root) {
+    if(c->parent != c->scr->root) {
       int x,y;
       grav_map_frame_to_win(c, c->x, c->y, &x, &y);
-      XReparentWindow(dpy, c->window, root, x, y);
+      XReparentWindow(dpy, c->window, c->scr->root, x, y);
       XSetWindowBorderWidth(dpy, c->window, c->old_bw);
       XRemoveFromSaveSet(dpy, c->window);
     }
