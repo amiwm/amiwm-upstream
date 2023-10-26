@@ -4,9 +4,11 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+struct _Icon;
+struct _Scrn;
 typedef struct _Client {
   struct _Client *next;
-  Scrn *scr;
+  struct _Scrn *scr;
   struct _Icon *icon;
   struct module *module;
   int wflags;
@@ -18,8 +20,13 @@ typedef struct _Client {
   int zoomx, zoomy, zoomw, zoomh;
   int old_bw, proto, state, gravity, reparenting;
   int active, shaped;
+#ifdef USE_FONTSETS
+  char *title;
+#else
   XTextProperty title;
+#endif
   XSizeHints sizehints;
+  struct _Style *style;
 } Client;
 
 extern Client *clients;
@@ -29,7 +36,7 @@ extern Client *getclientbyicon(Window);
 extern Client *createclient(Window);
 extern void rmclient(Client *);
 extern void flushclients(void);
-extern void scrsendconfig(Scrn *);
+extern void scrsendconfig(struct _Scrn *);
 extern void sendconfig(Client *);
 extern void getstate(Client *);
 extern void grav_map_frame_to_win(Client *, int, int, int *, int *);

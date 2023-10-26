@@ -2,6 +2,10 @@
 #include "screen.h"
 #include "icc.h"
 #include "icon.h"
+#include "style.h"
+#include "prefs.h"
+
+#include <string.h>
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -11,7 +15,7 @@ extern struct Library *XLibBase;
 extern void redraw(Client *, Window);
 
 Atom wm_state, wm_change_state, wm_protocols, wm_delete, wm_take_focus;
-Atom wm_colormaps, wm_name, wm_normal_hints, wm_hints, wm_icon_name;
+Atom wm_colormaps, wm_name, wm_normal_hints, wm_hints, wm_icon_name, wm_class;
 Atom amiwm_screen, swm_vroot, amiwm_wflags, amiwm_appiconmsg, amiwm_appwindowmsg;
 
 extern Display *dpy;
@@ -28,6 +32,7 @@ void init_atoms()
   wm_normal_hints = XInternAtom(dpy, "WM_NORMAL_HINTS", False);
   wm_hints = XInternAtom(dpy, "WM_HINTS", False);
   wm_icon_name = XInternAtom(dpy, "WM_ICON_NAME", False);
+  wm_class = XInternAtom(dpy, "WM_CLASS", False);
   amiwm_screen = XInternAtom(dpy, "AMIWM_SCREEN", False);
   swm_vroot = XInternAtom(dpy, "__SWM_VROOT", False);
   amiwm_wflags = XInternAtom(dpy, "AMIWM_WFLAGS", False);
@@ -117,15 +122,99 @@ void getproto(Client *c)
   XFree((char *) p);
 }
 
+static int stylematch_low(char *p, int l, char *m)
+{
+  char *lf;
+  int ml;
+  --m;
+  do {
+    lf = strchr(++m, '\n');
+    ml = (lf? lf-m:strlen(m));
+    if(ml == l && !strncmp(m, p, ml))
+      return 1;
+  } while((m=lf));
+  return 0;
+}
+
+static int stylematch_tprop(XTextProperty *p, char *m)
+{
+  return stylematch_low((char *)p->value, p->nitems, m);
+}
+
+#ifdef USE_FONTSETS
+static int stylematch_str(char *p, char *m)
+{
+  return stylematch_low(p, strlen(p), m);
+}
+#endif
+
+void checkstyle(Client *c)
+{
+  XTextProperty icon_name, class_name;
+  Style *style;
+
+  if(prefs.firststyle==NULL)
+    return;
+
+  if(!XGetTextProperty(dpy, c->window, &class_name, wm_class))
+    class_name.value=NULL;
+  else
+    /* This value seems to be 2x it's correct value always... */
+    class_name.nitems=strlen((char *)class_name.value);
+  if(!XGetWMIconName(dpy, c->window, &icon_name))
+    icon_name.value=NULL;
+
+  for(style=prefs.firststyle; style!=NULL; style=style->next)
+    if((class_name.value!=NULL && style->style_class!=NULL &&
+	stylematch_tprop(&class_name, style->style_class)) ||
+#ifdef USE_FONTSETS
+       (c->title!=NULL && style->style_title!=NULL &&
+	stylematch_str(c->title, style->style_title)) ||
+#else
+       (c->title.value!=NULL && style->style_title!=NULL &&
+	stylematch_tprop(&c->title, style->style_title)) ||
+#endif
+       (icon_name.value!=NULL && style->style_icon_title!=NULL &&
+	stylematch_tprop(&icon_name, style->style_icon_title))) {
+      c->style = style;
+      break;
+    }
+
+  if(icon_name.value)
+    XFree(icon_name.value);
+  if(class_name.value)
+    XFree(class_name.value);
+}
+
 void propertychange(Client *c, Atom a)
 {
   extern void checksizehints(Client *);
   extern void newicontitle(Client *);
 
   if(a==wm_name) {
+#ifdef USE_FONTSETS
+    XTextProperty prop;
+    if(c->title) {
+      free(c->title);
+      c->title = NULL;
+    }
+    if(XGetWMName(dpy, c->window, &prop) && prop.value) {
+      char **list;
+      int n;
+      if(XmbTextPropertyToTextList(dpy, &prop, &list, &n) >= Success) {
+	if(n > 0)
+	  c->title = strdup(list[0]);
+	XFreeStringList(list);
+      }
+      XFree(prop.value);
+    }
+#else
     if(c->title.value)
       XFree(c->title.value);
     XGetWMName(dpy, c->window, &c->title);
+#endif
+    if(c->style==NULL)
+      checkstyle(c);
     if(c->drag) {
       XClearWindow(dpy, c->drag);
       redraw(c, c->drag);
@@ -149,6 +238,8 @@ void propertychange(Client *c, Atom a)
   } else if(a==wm_protocols) {
     getproto(c);
   } else if(a==wm_icon_name) {
+    if(c->style==NULL)
+      checkstyle(c);
     if(c->icon) newicontitle(c);
   } else if(a==wm_state) {
     if(c->parent==c->scr->root) {
@@ -156,7 +247,8 @@ void propertychange(Client *c, Atom a)
       if(c->state==NormalState)
 	c->state=WithdrawnState;
     }
-  }
+  } else if(a==wm_class && c->style==NULL)
+    checkstyle(c);
 }
 
 void handle_client_message(Client *c, XClientMessageEvent *xcme)

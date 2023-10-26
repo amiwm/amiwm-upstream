@@ -1,6 +1,7 @@
 #include <X11/Xlib.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "alloc.h"
 #include "drawinfo.h"
@@ -13,6 +14,7 @@ extern struct Library *XLibBase;
 #define TAG_DRI_VERSION 1
 #define TAG_DRI_PENS    2
 #define TAG_DRI_FONT    3
+#define TAG_DRI_FONTSET 4
 
 extern char *progname;
 
@@ -27,7 +29,12 @@ char *default_colors[NUMDRIPENS] = {
 };
 
 char *default_screenfont =
-"-b&h-lucida-medium-r-normal-sans-12-*-*-*-*-*-iso8859-1";
+"-b&h-lucida-medium-r-normal-sans-12-*-*-*-*-*-iso8859-1"
+#ifdef USE_FONTSETS
+",-b&h-lucida-medium-r-normal-sans-12-*-*-*-*-*-iso10646-1"
+",-misc-fixed-medium-r-normal--14-*-*-*-*-*-jisx0208.1983-0"
+#endif
+;
 
 static void setdriprop(Display *dpy, Atom atom, Atom typ, Window win,
 		       struct DrawInfo *dri)
@@ -36,8 +43,13 @@ static void setdriprop(Display *dpy, Atom atom, Atom typ, Window win,
   CARD16 i;
   *p++=TAG_DRI_VERSION;
   *p++=dri->dri_Version;
+#ifdef USE_FONTSETS
+  *p++=TAG_DRI_FONTSET;
+  *p++=dri->dri_FontSetAtom;
+#else
   *p++=TAG_DRI_FONT;
   *p++=dri->dri_Font->fid;
+#endif
   *p++=TAG_DRI_PENS;
   *p++=dri->dri_NumPens;
   for(i=0; i<dri->dri_NumPens; i++)
@@ -64,10 +76,17 @@ static void getdriprop(Display *dpy, Atom atom, Atom typ, Window win,
 	if(i<nitems)
 	  dri->dri_Version=prop[i++];
 	break;
+#ifdef USE_FONTSETS
+      case TAG_DRI_FONTSET:
+	if(i<nitems)
+	  dri->dri_FontSetAtom=prop[i++];
+	break;
+#else
       case TAG_DRI_FONT:
 	if(i<nitems)
 	  dri->dri_Font=XQueryFont(dpy, prop[i++]);
 	break;
+#endif
       case TAG_DRI_PENS:
 	if(i<nitems) {
 	  n=prop[i++];
@@ -117,17 +136,38 @@ unsigned long allocdripen(Display *dpy, int n, Colormap cm)
   return screen.pixel;
 }
 
+void term_dri(struct DrawInfo *dri, Display *dpy, Colormap cm)
+{
+  if(dri->dri_Pens) {
+    XFreeColors(dpy, cm, dri->dri_Pens, dri->dri_NumPens, 0);
+    free(dri->dri_Pens);
+    dri->dri_Pens = NULL;
+  }
+#ifdef USE_FONTSETS
+  if(dri->dri_FontSet) {
+    XFreeFontSet(dpy, dri->dri_FontSet);
+    dri->dri_FontSet = NULL;
+  }
+#else
+  if(dri->dri_Font) {
+    XFreeFont(dpy, dri->dri_Font);
+    dri->dri_Font = NULL;
+  }
+#endif
+}
+
 void init_dri(struct DrawInfo *dri, Display *dpy, Window root, Colormap cm,
 	      int override)
 {
   int i;
   Atom driatom, dritypatom;
 
-  memset(dri, 0, sizeof(*dri));
   driatom=XInternAtom(dpy, "AMIWM_DRAWINFO", False);
   dritypatom=XInternAtom(dpy, "DRAWINFO", False);
-  if(!override)
+  if(!override) {
+    memset(dri, 0, sizeof(*dri));
     getdriprop(dpy, driatom, dritypatom, root, dri);
+  }
   if(!dri->dri_Version)
     dri->dri_Version = DRI_VERSION;
   if(!dri->dri_Pens) {
@@ -139,12 +179,57 @@ void init_dri(struct DrawInfo *dri, Display *dpy, Window root, Colormap cm,
       dri->dri_Pens[i] = allocdripen(dpy, i, cm);
     dri->dri_NumPens = NUMDRIPENS;
   }
+#ifdef USE_FONTSETS
+  if(!dri->dri_FontSet)
+    {
+      char *fn;
+      XFontStruct **fsl;
+      char **fnl;
+      char **missing_charsets = NULL;
+      int n_missing_charsets = 0;
+
+      if(dri->dri_FontSetAtom) {
+	fn = XGetAtomName(dpy, dri->dri_FontSetAtom);
+      } else {
+	dri->dri_FontSetAtom = XInternAtom(dpy, fn=default_screenfont, False);
+      }
+
+      dri->dri_FontSet = XCreateFontSet(dpy, fn,
+					&missing_charsets,
+					&n_missing_charsets, NULL);
+      if(missing_charsets)
+	XFreeStringList(missing_charsets);
+      if(!dri->dri_FontSet) {
+	fprintf(stderr, "%s: cannot open font %s\n", progname, fn);
+	exit(1);
+      }
+      if(XFontsOfFontSet(dri->dri_FontSet, &fsl, &fnl) < 1) {
+	fprintf(stderr, "%s: fontset %s is empty\n", progname, fn);
+	exit(1);
+      }
+      if(fn != default_screenfont)
+	XFree(fn);
+#if 0
+      //dri->dri_Font = fsl[0];
+      dri->dri_Font = malloc(sizeof(XFontStruct));
+      memcpy(dri->dri_Font, fsl[0], sizeof(XFontStruct));
+#else
+      dri->dri_Ascent = fsl[0]->ascent;
+      dri->dri_Descent = fsl[0]->descent;
+      dri->dri_MaxBoundsWidth = fsl[0]->max_bounds.width;
+#endif
+    }
+#else
   if(!dri->dri_Font)
     if(!(dri->dri_Font = XLoadQueryFont(dpy, default_screenfont))) {
       fprintf(stderr, "%s: cannot open font %s\n", progname,
 	      default_screenfont);
       exit(1);
     }
+  dri->dri_Ascent = dri->dri_Font->ascent;
+  dri->dri_Descent = dri->dri_Font->descent;
+  dri->dri_MaxBoundsWidth = dri->dri_Font->max_bounds.width;
+#endif
   if(override)
     setdriprop(dpy, driatom, dritypatom, root, dri);
 }

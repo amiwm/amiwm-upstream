@@ -7,7 +7,7 @@ YACC = @YACC@
 CFLAGS = @CFLAGS@
 YFLAGS = -d
 DEFS = @DEFS@
-ALL_CFLAGS = -I@srcdir@ -I@srcdir@/libami $(DEFS) $(CFLAGS) @X_CFLAGS@
+ALL_CFLAGS = -I. -I@srcdir@ -I@srcdir@/libami $(DEFS) $(CFLAGS) @X_CFLAGS@
 LIBS = @X_LIBS@ @X_PRE_LIBS@ -Llibami -lami @XT_LIB_KLUDGE@ -lXext -lXmu \
 	-lX11 @X_EXTRA_LIBS@ @LIBS@
 prefix = @prefix@
@@ -18,12 +18,13 @@ mandir = $(prefix)/man
 INSTALL = @INSTALL@
 LN_S = @LN_S@
 RM = -rm -f
-LIBAMI=libami/libami.a
+LIBAMI = libami/libami.a
 DT_DIR = /etc/dt
+STRIPFLAG = -s
 
 PROGS = amiwm requestchoice executecmd ppmtoinfo
 
-MODULES = Background Keyboard
+MODULES = $(srcdir)/Background Keyboard
 
 OBJS  = main.o screen.o client.o frame.o icc.o \
 		icon.o menu.o diskobject.o gram.o lex.o rc.o \
@@ -36,7 +37,7 @@ SRCS = main.c screen.c client.c frame.c icc.c \
 
 DISTFILES = README README.modules INSTALL LICENSE amiwm.1 \
 	configure configure.in Makefile.in install-sh smakefile scoptions \
-	*.[chly] system.amiwmrc def_tool.info *.map \
+	*.[chly] system.amiwmrc def_*.info *.map \
 	Background Xresources.amiwm.in Amilogo.?m Xsession*.in Xinitrc.in \
 	amiwm-init libami/Makefile.in libami/*.[chly]
 
@@ -44,10 +45,13 @@ PACKAGENAME = amiwm
 
 AMIWM_HOME = $(libdir)/amiwm
 
-all : $(PROGS) $(MODULES)
+all : lib_all
+	@$(MAKE) local_all
 
-lib :
-	@( cd libami; $(MAKE) libami.a )
+local_all : $(PROGS) $(MODULES)
+
+lib_all :
+	@( cd libami; $(MAKE) all )
 
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) $<
@@ -61,51 +65,60 @@ rc.o : rc.c
 diskobject.o : diskobject.c
 	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
 
+filesystem.o : joke_fs.c
+	$(CC) -o $@ -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
+
 ppmtoinfo.o : ppmtoinfo.c
 	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
 
 gram.h gram.c: gram.y
-	$(YACC) $(YFLAGS) gram.y
+	$(YACC) $(YFLAGS) $<
 	mv y.tab.c gram.c
 	mv y.tab.h gram.h
 
 lex.c : lex.l
-	$(LEX) -t lex.l > lex.c
+	$(LEX) -t $< > lex.c
 
 kbdmodule.h kbdmodule.c: kbdmodule.y
-	$(YACC) $(YFLAGS) kbdmodule.y
+	$(YACC) $(YFLAGS) $<
 	mv y.tab.c kbdmodule.c
 	mv y.tab.h kbdmodule.h
 
 kbdlexer.c : kbdlexer.l
-	$(LEX) -t kbdlexer.l > kbdlexer.c
+	$(LEX) -t $< > kbdlexer.c
 
 install : $(PROGS) $(MODULES) Xsession Xsession2 Xinitrc amiwm-init
 	-mkdir -p $(AMIWM_HOME)
-	$(INSTALL) -s requestchoice $(AMIWM_HOME)/requestchoice
-	$(INSTALL) -s executecmd $(AMIWM_HOME)/executecmd
+	$(INSTALL) $(STRIPFLAG) requestchoice $(AMIWM_HOME)/requestchoice
+	$(INSTALL) $(STRIPFLAG) executecmd $(AMIWM_HOME)/executecmd
 	for module in $(MODULES); do \
-	  if [ "$$module" = "Background" ]; then \
-	    $(INSTALL) $$module $(AMIWM_HOME)/$$module; \
+	  if [ "$$module" = "$(srcdir)/Background" ]; then \
+	    $(INSTALL) $$module $(AMIWM_HOME)/Background; \
 	  else \
-	    $(INSTALL) -s $$module $(AMIWM_HOME)/$$module; \
-	  fi \
+	    $(INSTALL) $(STRIPFLAG) $$module $(AMIWM_HOME)/$$module; \
+	  fi; \
 	done
-	$(INSTALL) -m 644 system.amiwmrc $(AMIWM_HOME)/system.amiwmrc
-	$(INSTALL) -m 644 def_tool.info $(AMIWM_HOME)/def_tool.info
-	$(INSTALL) -m 644 system.map $(AMIWM_HOME)/system.map
-	$(INSTALL) -m 644 magicwb.map $(AMIWM_HOME)/magicwb.map
-	$(INSTALL) -m 644 schwartz.map $(AMIWM_HOME)/schwartz.map
+	$(INSTALL) -m 644 $(srcdir)/system.amiwmrc $(AMIWM_HOME)/system.amiwmrc
+	$(INSTALL) -m 644 $(srcdir)/def_tool.info $(AMIWM_HOME)/def_tool.info
+	$(INSTALL) -m 644 $(srcdir)/system.map $(AMIWM_HOME)/system.map
+	$(INSTALL) -m 644 $(srcdir)/magicwb.map $(AMIWM_HOME)/magicwb.map
+	$(INSTALL) -m 644 $(srcdir)/schwartz.map $(AMIWM_HOME)/schwartz.map
 	$(INSTALL) -m 755 Xsession $(AMIWM_HOME)/Xsession
 	$(INSTALL) -m 755 Xsession2 $(AMIWM_HOME)/Xsession2
 	$(INSTALL) -m 755 Xinitrc $(AMIWM_HOME)/Xinitrc
-	$(INSTALL) -m 755 amiwm-init $(AMIWM_HOME)/amiwm-init
-	$(INSTALL) -s amiwm $(bindir)/amiwm
-	$(INSTALL) -s ppmtoinfo $(bindir)/ppmtoinfo
+	$(INSTALL) -m 755 $(srcdir)/amiwm-init $(AMIWM_HOME)/amiwm-init
+	-mkdir -p $(bindir)
+	$(INSTALL) $(STRIPFLAG) amiwm $(bindir)/amiwm
+	$(INSTALL) $(STRIPFLAG) ppmtoinfo $(bindir)/ppmtoinfo
 	$(RM) $(bindir)/requestchoice
 	$(LN_S) $(AMIWM_HOME)/requestchoice $(bindir)/requestchoice
 	-mkdir -p $(mandir)/man1
-	$(INSTALL) -m 644 amiwm.1 $(mandir)/man1/amiwm.1
+	$(INSTALL) -m 644 $(srcdir)/amiwm.1 $(mandir)/man1/amiwm.1
+
+fs-install : Filesystem
+	$(INSTALL) $(STRIPFLAG) Filesystem $(AMIWM_HOME)/Filesystem
+	$(INSTALL) -m 644 def_disk.info $(AMIWM_HOME)/def_disk.info
+	$(INSTALL) -m 644 def_drawer.info $(AMIWM_HOME)/def_disk.info
 
 cde-install : Xresources.amiwm Amilogo.bm Amilogo.pm
 	-mkdir -p $(DT_DIR)/config/C/Xresources.d
@@ -115,30 +128,36 @@ cde-install : Xresources.amiwm Amilogo.bm Amilogo.pm
 	$(INSTALL) -m 644 Amilogo.pm $(DT_DIR)/appconfig/icons/C/Amilogo.pm
 
 
-amiwm : $(OBJS) lib
+amiwm : $(OBJS) $(LIBAMI)
 	$(CC) -o amiwm $(OBJS) $(LIBS)
 
-requestchoice : requestchoice.o lib
+requestchoice : requestchoice.o $(LIBAMI)
 	$(CC) -o requestchoice requestchoice.o $(LIBS)
 
-executecmd : executecmd.o lib
+executecmd : executecmd.o $(LIBAMI)
 	$(CC) -o executecmd executecmd.o $(LIBS)
 
-Keyboard : kbdmodule.o kbdlexer.o lib
+Filesystem : filesystem.o $(LIBAMI)
+	$(CC) -o Filesystem filesystem.o $(LIBS)
+
+Keyboard : kbdmodule.o kbdlexer.o $(LIBAMI)
 	$(CC) -o Keyboard kbdmodule.o kbdlexer.o $(LIBS)
 
 ppmtoinfo : ppmtoinfo.o
 	$(CC) -o ppmtoinfo ppmtoinfo.o -lm
 
+localetest : localetest.o $(LIBAMI)
+	$(CC) -o localetest localetest.o $(LIBS)
+
 clean :
-	$(RM) core $(PROGS) $(LIBAMI) *.o libami/*.o
+	$(RM) core $(PROGS) $(LIBAMI) Keyboard *.o libami/*.o
 	$(RM) lex.yy.c lex.c y.tab.c y.tab.h gram.h gram.c
 	$(RM) kbdlexer.c kbdmodule.h kbdmodule.c
 	$(RM) config.log
 
 distclean : clean
 	$(RM) config.status config.cache *~
-	$(RM) Makefile Xresources.amiwm Xsession Xsession2 Xinitrc
+	$(RM) Makefile libami/Makefile Xresources.amiwm Xsession Xsession2 Xinitrc
 
 spotless : distclean
 

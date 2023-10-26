@@ -9,6 +9,7 @@ extern FILE *rcfile;
 #define yywrap() 1
 extern int parse_keyword(char *);
 void fixup_string(char *, char *);
+#define YY_SKIP_YYWRAP
 %}
 %%
 

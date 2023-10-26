@@ -9,6 +9,7 @@
 #include "client.h"
 #include "prefs.h"
 #include "icc.h"
+#include "style.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -23,9 +24,18 @@ extern XContext icon_context, client_context, screen_context;
 
 extern void init_iconpalette();
 
+#ifdef USE_FONTSETS
+XFontSet labelfontset;
+int labelfont_ascent;
+#else
 XFontStruct *labelfont;
+#endif
 
-char *label_font_name="-b&h-lucida-medium-r-normal-sans-10-*-*-*-*-*-iso8859-1";
+char *label_font_name="-b&h-lucida-medium-r-normal-sans-10-*-*-*-*-*-iso8859-1"
+#ifdef USE_FONTSETS
+",-misc-fixed-medium-r-normal--10-*-*-*-*-*-iso10646-1"
+#endif
+;
 
 void redrawicon(Icon *i, Window w)
 {
@@ -37,10 +47,16 @@ void redrawicon(Icon *i, Window w)
     if(i->selected && i->secondpm)
       pm=i->secondpm;
     if(pm) {
+      XGCValues xgc;
       Window r;
       int x, y;
       unsigned int w, h, bw, d;
       XGetGeometry(dpy, pm, &r, &x, &y, &w, &h, &bw, &d);
+      if(i->maskpm) {
+	xgc.clip_mask = i->maskpm;
+	xgc.clip_x_origin = xgc.clip_y_origin = 4;
+	XChangeGC(dpy, scr->gc, GCClipXOrigin|GCClipYOrigin|GCClipMask, &xgc);
+      }
       if(d!=scr->depth) {
 	XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHADOWPEN]);
 	XSetBackground(dpy, scr->gc, scr->dri.dri_Pens[BACKGROUNDPEN]);
@@ -50,6 +66,10 @@ void redrawicon(Icon *i, Window w)
       else
 	XCopyArea(dpy, pm, i->window, scr->gc, 0, 0,
 		  i->width-8, i->height-8, 4, 4);
+      if(i->maskpm) {
+	xgc.clip_mask = None;
+	XChangeGC(dpy, scr->gc, GCClipMask, &xgc);
+      }
     }
     XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[i->selected? SHADOWPEN:SHINEPEN]);
     XDrawLine(dpy, w, scr->gc, 0, 0, i->width-1, 0);
@@ -57,9 +77,15 @@ void redrawicon(Icon *i, Window w)
     XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[i->selected? SHINEPEN:SHADOWPEN]);
     XDrawLine(dpy, w, scr->gc, 1, i->height-1, i->width-1, i->height-1);
     XDrawLine(dpy, w, scr->gc, i->width-1, 1, i->width-1, i->height-1);
+#ifdef USE_FONTSETS
+  } else if(w==i->labelwin && i->label) {
+    XmbDrawImageString(dpy, w, labelfontset, scr->icongc, 0, labelfont_ascent,
+		       i->label, strlen(i->label));
+#else
   } else if(w==i->labelwin && i->label.value) {
     XDrawImageString(dpy, w, scr->icongc, 0, labelfont->ascent,
 		     (char *)i->label.value, i->label.nitems);
+#endif
   }
 }
 
@@ -146,16 +172,16 @@ void createdefaulticons()
   Window r;
   int x,y;
   unsigned int b,d;
-  extern void load_do(const char *, Pixmap *, Pixmap *);
+  extern void load_do(const char *, struct IconPixmaps *);
 
   init_iconpalette();
-  load_do(prefs.defaulticon, &scr->default_tool_pm, &scr->default_tool_pm2);
-  if(scr->default_tool_pm == None) {
+  load_do(prefs.defaulticon, &scr->default_tool_pms);
+  if(scr->default_tool_pms.pm == None) {
     fprintf(stderr, "%s: Cannot load default icon \"%s\".\n",
 	    progname, prefs.defaulticon);
     exit(1);
   }
-  XGetGeometry(dpy, scr->default_tool_pm, &r, &x, &y,
+  XGetGeometry(dpy, scr->default_tool_pms.pm, &r, &x, &y,
 	       &scr->default_tool_pm_w, &scr->default_tool_pm_h, &b, &d);
 }
 
@@ -221,7 +247,41 @@ void destroyiconicon(Icon *i)
     XRemoveFromSaveSet(dpy, i->innerwin);
     i->innerwin=None;
   }
-  i->iconpm = i->secondpm = None;
+  i->iconpm = i->secondpm = i->maskpm = None;
+}
+
+static void setstdiconicon(Icon *i, unsigned int *w, unsigned int *h)
+{
+  Style *s;
+  if(i->client && (s=i->client->style) && s->icon_name) {
+    if(s->icon_pms.pm==None) {
+      Window r;
+      int x,y;
+      unsigned int b,d;
+      extern void load_do(const char *, struct IconPixmaps *);
+      load_do(s->icon_name, &s->icon_pms);
+      if(s->icon_pms.pm == None) {
+	fprintf(stderr, "%s: Cannot load icon \"%s\".\n",
+		progname, s->icon_name);
+	s->icon_name = NULL;
+      } else
+	XGetGeometry(dpy, s->icon_pms.pm, &r, &x, &y,
+		     &s->icon_pm_w, &s->icon_pm_h, &b, &d);
+    }
+    if(s->icon_pms.pm!=None) {
+      i->iconpm=s->icon_pms.pm;
+      i->secondpm=s->icon_pms.pm2;
+      i->maskpm=None;
+      *w=s->icon_pm_w+8;
+      *h=s->icon_pm_h+8;
+      return;
+    }
+  }
+  i->iconpm=scr->default_tool_pms.pm;
+  i->secondpm=scr->default_tool_pms.pm2;
+  i->maskpm=None;
+  *w=scr->default_tool_pm_w+8;
+  *h=scr->default_tool_pm_h+8;
 }
 
 void createiconicon(Icon *i, XWMHints *wmhints)
@@ -233,7 +293,7 @@ void createiconicon(Icon *i, XWMHints *wmhints)
   void newicontitle(Client *);
 
   scr=i->scr;
-  if(wmhints) {
+  if(wmhints && !prefs.customiconsonly) {
     if((wmhints->flags&IconWindowHint) && wmhints->icon_window) {
       Window r;
       unsigned int b, d;
@@ -245,15 +305,16 @@ void createiconicon(Icon *i, XWMHints *wmhints)
       int x, y;
       unsigned int b, d;
       i->iconpm=wmhints->icon_pixmap;
+      i->secondpm=None;
+      if(wmhints->flags&IconMaskHint)
+	i->maskpm = wmhints->icon_mask;
+      else
+	i->maskpm = None;
       XGetGeometry(dpy, i->iconpm, &r, &x, &y, &w, &h, &b, &d);
       w+=8;
       h+=8;
-    } else {
-      i->iconpm=scr->default_tool_pm;
-      i->secondpm=scr->default_tool_pm2;
-      w=scr->default_tool_pm_w+8;
-      h=scr->default_tool_pm_h+8;
-    }
+    } else
+      setstdiconicon(i, &w, &h);
     if(wmhints->flags&IconPositionHint) {
       x=wmhints->icon_x;
       y=wmhints->icon_y;
@@ -262,11 +323,9 @@ void createiconicon(Icon *i, XWMHints *wmhints)
       unsigned int w, h, bw, d;
       XGetGeometry(dpy, i->window, &r, &x, &y, &w, &h, &bw, &d);
     }
-  } else {
-    i->iconpm=scr->default_tool_pm;
-    w=scr->default_tool_pm_w+8;
-    h=scr->default_tool_pm_h+8;
-  }
+  } else
+    setstdiconicon(i, &w, &h);
+
   if(!(i->window)) {  
     attr.override_redirect=True;
     attr.background_pixel=scr->dri.dri_Pens[BACKGROUNDPEN];
@@ -321,7 +380,7 @@ void createicon(Client *c)
 }
 
 Icon *createappicon(struct module *m, Window p, char *name,
-		    Pixmap pm1, Pixmap pm2, int x, int y)
+		    Pixmap pm1, Pixmap pm2, Pixmap pmm, int x, int y)
 {
   Icon *i;
   Client *c;
@@ -351,6 +410,7 @@ Icon *createappicon(struct module *m, Window p, char *name,
 
   i->iconpm=pm1;
   i->secondpm=pm2;
+  i->maskpm=pmm;
   XGetGeometry(dpy, i->iconpm, &r, &tx, &ty, &w, &h, &b, &d);
   w+=8;
   h+=8;
@@ -370,10 +430,17 @@ Icon *createappicon(struct module *m, Window p, char *name,
   XSaveContext(dpy, i->labelwin, icon_context, (XPointer)i);
   XSelectInput(dpy, i->labelwin, ExposureMask);
 
+#ifdef USE_FONTSETS
+  if((i->label=malloc(strlen(name)+1))!=NULL) {
+    strcpy(i->label, name);
+    i->labelwidth=XmbTextEscapement(labelfontset, i->label,
+				    strlen(i->label));
+#else
   if((i->label.value=malloc((i->label.nitems=strlen(name))+1))!=NULL) {
     strcpy((char *)i->label.value, name);
     i->labelwidth=XTextWidth(labelfont, (char *)i->label.value,
 			     i->label.nitems);
+#endif
     if(i->labelwidth)
       XResizeWindow(dpy, i->labelwin, i->labelwidth, scr->lh);
     XMoveWindow(dpy, i->labelwin,
@@ -425,11 +492,16 @@ void rmicon(Icon *i)
     XDestroyWindow(dpy, i->labelwin);
     XDeleteContext(dpy, i->labelwin, icon_context);
   }
+#ifdef USE_FONTSETS
+  if(i->label)
+    free(i->label);
+#else
   if(i->label.value)
     if(i->module)
       free(i->label.value);
     else
       XFree(i->label.value);
+#endif
   free(i);
 }
 
@@ -497,6 +569,43 @@ void cleanupicons()
 void newicontitle(Client *c)
 {
   Icon *i=c->icon;
+#ifdef USE_FONTSETS
+  XTextProperty prop;
+  if(i->label) {
+    free(i->label);
+    i->label = NULL;
+  }
+  if(XGetWMIconName(dpy, c->window, &prop) && prop.value) {
+    char **list;
+    int n;
+    if(XmbTextPropertyToTextList(dpy, &prop, &list, &n) >= Success) {
+      if(n > 0) {
+	if( prefs.shortlabelicons )
+	{
+	  if (strlen(list[0])>10){
+	    char *str1=list[0];
+	    char str2[11];
+	    strncpy (str2,str1,8);
+	    str2[8]='.';
+	    str2[9]='.';
+	    str2[10]='\0';
+	    i->label = strdup(str2);
+	  } else {
+	    i->label = strdup(list[0]);
+	  }
+	} else {
+	  i->label = strdup(list[0]);
+	}
+	i->labelwidth=XmbTextEscapement(labelfontset, i->label,
+					strlen(i->label));
+      }
+      XFreeStringList(list);
+    }
+    XFree(prop.value);
+  }
+  if(!i->label)
+    i->labelwidth = 0;
+#else
   if(i->label.value)
     XFree(i->label.value);
   if(!(XGetWMIconName(dpy, c->window, &i->label))) {
@@ -505,6 +614,7 @@ void newicontitle(Client *c)
   } else
     i->labelwidth=XTextWidth(labelfont, (char *)i->label.value,
 			     i->label.nitems);
+#endif
   if(i->labelwidth)
     XResizeWindow(dpy, i->labelwin, i->labelwidth, c->scr->lh);
   if(i->mapped && i->labelwidth>0)
@@ -516,4 +626,12 @@ void newicontitle(Client *c)
 	      i->y+i->height+1);
   if(i->mapped)
     redrawicon(i, i->labelwin);
+}
+
+void free_icon_pms(struct IconPixmaps *pms)
+{
+  if(pms->pm!=None) XFreePixmap(dpy, pms->pm);
+  if(pms->pm2!=None) XFreePixmap(dpy, pms->pm2);
+  free_color_store(dpy, &pms->cs);
+  free_color_store(dpy, &pms->cs2);
 }

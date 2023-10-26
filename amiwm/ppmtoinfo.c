@@ -224,7 +224,7 @@ unsigned char *processicon(FILE *ifp, int floyd, pixel **mappixels,
   long* nextberr;
   long* temperr;
   register long sr, sg, sb, err;
-  int fs_direction;
+  int fs_direction, dscale;
 
   pixels = readppm( ifp, &cols, &rows, &maxval );
   if(ifp != stdin)
@@ -252,6 +252,11 @@ unsigned char *processicon(FILE *ifp, int floyd, pixel **mappixels,
   outimg = (unsigned char *)myalloc(imgsz);
   memset(outimg, 0, imgsz);
   oip = outimg;
+
+  dscale = 0;
+  if(maxval>=16384)
+    while(maxval>=(16384<<dscale))
+      dscale++;
 
   if ( floyd ) {
     /* Initialize Floyd-Steinberg error vectors. */
@@ -304,15 +309,18 @@ unsigned char *processicon(FILE *ifp, int floyd, pixel **mappixels,
 	sb = pP->b;
       }
 
-      dist = 2000000000;
       for ( i = 0; i < newcolors; ++i ) {
-	r2 = colormap[i].r;
-	g2 = colormap[i].g;
-	b2 = colormap[i].b;
-	newdist = ( sr - r2 ) * ( sr - r2 ) +
-	  ( sg - g2 ) * ( sg - g2 ) +
-	  ( sb - b2 ) * ( sb - b2 );
-	if ( newdist < dist ) {
+	r2 = sr - colormap[i].r;
+	g2 = sg - colormap[i].g;
+	b2 = sb - colormap[i].b;
+	if (dscale) {
+	  r2 >>= dscale;
+	  g2 >>= dscale;
+	  b2 >>= dscale;
+	}
+
+	newdist = r2 * r2 + g2 * g2 + b2 * b2;
+	if ( i==0 || newdist < dist ) {
 	  ind = i;
 	  dist = newdist;
 	}

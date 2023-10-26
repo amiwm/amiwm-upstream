@@ -25,8 +25,14 @@
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
+#ifdef HAVE_SYS_TYPES_H
+#include <sys/types.h>
+#endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
+#ifdef USE_FONTSETS
+#include <locale.h>
 #endif
 
 #include "drawinfo.h"
@@ -64,7 +70,7 @@ typedef struct _DragIcon {
   int x, y;
 } DragIcon;
 
-Display *dpy;
+Display *dpy = NULL;
 char *progname;
 Cursor wm_curs;
 int signalled=0, forcemoving=0;
@@ -85,8 +91,9 @@ static int d_offset=0;
 static fd_set master_fd_set;
 static int max_fd=0;
 char *free_screentitle=NULL;
-char *x_server;
+char *x_server=NULL;
 int shape_event_base, shape_error_base, shape_extn=0;
+int server_grabs=0;
 
 unsigned int meta_mask, switch_mask;
 
@@ -107,7 +114,7 @@ extern void menu_on(void);
 extern void menu_off(void);
 extern void menubar_enter(Window);
 extern void menubar_leave(Window);
-extern void *getitembyhotkey(char);
+extern void *getitembyhotkey(KeySym);
 extern void menuaction(void *);
 extern void screentoback();
 extern void openscreen(char *, Window);
@@ -184,7 +191,7 @@ void remove_call_out(void (*what)(void *), void *with)
 {
   struct coevent *ee, **e=&eventlist;
 
-  while(*e && ((*e)->what != what || (*e)->with))
+  while(*e && ((*e)->what != what || (*e)->with != with))
     e=&(*e)->next;
   if((ee=*e)) {
     *e=(*e)->next;
@@ -198,20 +205,20 @@ void remove_call_out(void (*what)(void *), void *with)
 #define GETTIMEOFDAY(tp) gettimeofday(tp)
 #endif
 
-void call_out(int howlong, void (*what)(void *), void *with)
+void call_out(int howlong_s, int howlong_u, void (*what)(void *), void *with)
 {
   struct coevent *ce=malloc(sizeof(struct coevent));
   if(ce) {
     struct coevent **e=&eventlist;
     GETTIMEOFDAY(&ce->when);
-    ce->when.tv_sec+=howlong/1000;
-    ce->when.tv_usec+=1000*(howlong%1000);
+    ce->when.tv_sec+=howlong_s;
+    ce->when.tv_usec+=howlong_u;
     FIXUPTV(ce->when);
     ce->what=what;
     ce->with=with;
     while(*e && ((*e)->when.tv_sec<ce->when.tv_sec ||
 		 ((*e)->when.tv_sec==ce->when.tv_sec &&
-		  (*e)->when.tv_usec>=ce->when.tv_usec)))
+		  (*e)->when.tv_usec<=ce->when.tv_usec)))
       e=&(*e)->next;
     ce->next=*e;
     *e=ce;
@@ -285,7 +292,8 @@ void lookup_keysyms()
   XFree(kmap);
   XFreeModifiermap(map);
   if(meta_mask == 0)
-    meta_mask = alt_mask;
+    meta_mask = (alt_mask? alt_mask :
+		 (switch_mask? switch_mask : Mod1Mask));
 }
 
 
@@ -307,7 +315,7 @@ void wberror(Scrn *s, char *message)
   XClearWindow(dpy, s->menubar);
   redrawmenubar(s->menubar);
   XBell(dpy, 100);
-  call_out(2000, (void(*)(void *))restorescreentitle, s);
+  call_out(2, 0, (void(*)(void *))restorescreentitle, s);
 }
 
 void setfocus(Window w)
@@ -315,6 +323,25 @@ void setfocus(Window w)
   if(w == None && prefs.focus != FOC_CLICKTOTYPE)
     w = PointerRoot;
   XSetInputFocus(dpy, w, (prefs.focus==FOC_CLICKTOTYPE? RevertToNone:RevertToPointerRoot), CurrentTime);
+}
+
+static void update_clock(void *dontcare);
+
+void grab_server()
+{
+  if(!server_grabs++)
+    XGrabServer(dpy);
+}
+
+void ungrab_server()
+{
+  if(!--server_grabs) {
+    XUngrabServer(dpy);
+    if(prefs.titlebarclock) {
+      remove_call_out(update_clock, NULL);
+      update_clock(NULL);
+    }
+  }
 }
 
 void drawrubber()
@@ -341,7 +368,7 @@ void drawrubber()
 
 static void move_dashes(void *dontcare)
 {
-  call_out(50, move_dashes, dontcare);
+  call_out(0, 50000, move_dashes, dontcare);
   drawrubber();
   if((--d_offset)<0)
     d_offset=11;
@@ -351,10 +378,14 @@ static void move_dashes(void *dontcare)
 void endrubber()
 {
   if(rubberclient) {
-    drawrubber();
+    if((!prefs.opaquemove||dragclient==NULL) && 
+       (!prefs.opaqueresize||resizeclient==NULL))
+      drawrubber();
     rubberclient=NULL;
   } else if(boundingwin) {
-    drawrubber();
+    if((!prefs.opaquemove||dragclient==NULL) && 
+       (!prefs.opaqueresize||resizeclient==NULL))
+      drawrubber();
     boundingwin=None;
   }
 }
@@ -376,13 +407,13 @@ void abortrubber()
   if(rubberclient) {
     endrubber();
     dragclient=resizeclient=NULL;
-    XUngrabServer(dpy);
+    ungrab_server();
     XUngrabPointer(dpy, CurrentTime);
   } else if(boundingwin) {
     endrubber();
     boundingwin=None;
     boundingscr=NULL;
-    XUngrabServer(dpy);
+    ungrab_server();
     XUngrabPointer(dpy, CurrentTime);
   }
 }
@@ -395,7 +426,7 @@ void startbounding(Scrn *s, Window w, XEvent *e)
   XGrabPointer(dpy, w, False, Button1MotionMask|ButtonPressMask|
 	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, s->back, None,
 	       CurrentTime);
-  XGrabServer(dpy);
+  grab_server();
   rubberx=e->xbutton.x;
   rubbery=e->xbutton.y;
   rubberx0=e->xbutton.x_root;
@@ -403,7 +434,7 @@ void startbounding(Scrn *s, Window w, XEvent *e)
   rubberw=0;
   rubberh=0;
   drawrubber();
-  call_out(0, move_dashes, NULL);
+  call_out(0, 0, move_dashes, NULL);
 }
 
 void endbounding(XEvent *e)
@@ -435,7 +466,7 @@ void endbounding(XEvent *e)
 	   bx+i->width>rubberx && by+i->height>rubbery)
 	  selecticon(i);
     boundingscr=NULL;
-    XUngrabServer(dpy);
+    ungrab_server();
     XUngrabPointer(dpy, CurrentTime);
   }
 }
@@ -447,7 +478,8 @@ void startdragging(Client *c, XEvent *e)
   XGrabPointer(dpy, c->drag, False, Button1MotionMask|ButtonPressMask|
 	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, scr->back,
 	       None, CurrentTime);
-  XGrabServer(dpy);
+  if(!prefs.opaquemove)
+    grab_server();
   initrubber(e->xbutton.x_root, e->xbutton.y_root, c);
   rubberx0-=rubberx;
   rubbery0-=rubbery;
@@ -461,7 +493,8 @@ void startdragging(Client *c, XEvent *e)
     if(rubbery<0)
       rubbery=0;
   }
-  drawrubber();
+  if(!prefs.opaquemove)
+    drawrubber();
 }
 
 void startscreendragging(Scrn *s, XEvent *e)
@@ -646,6 +679,21 @@ void starticondragging(Scrn *scr, XEvent *e)
 		    xwa.depth, xwa.class, xwa.visual,
 		    CWBackPixmap|CWOverrideRedirect|CWSaveUnder|CWColormap,
 		    &xswa);
+#ifdef HAVE_XSHAPE
+    if(shape_extn)
+      if(i->innerwin) {
+	int bShaped, xbs, ybs, cShaped, xcs, ycs;
+	unsigned int wbs, hbs, wcs, hcs;
+	XShapeQueryExtents(dpy, i->innerwin, &bShaped, &xbs, &ybs, &wbs, &hbs,
+			   &cShaped, &xcs, &ycs, &wcs, &hcs);
+	if(bShaped)
+	  XShapeCombineShape(dpy, dragiconlist[numdragicons].w, ShapeBounding,
+			     0, 0, i->innerwin, ShapeBounding, ShapeSet);
+      } else if(i->maskpm) {
+	XShapeCombineMask(dpy, dragiconlist[numdragicons].w, ShapeBounding,
+			  0, 0, i->maskpm, ShapeSet);
+      }
+#endif
     XMapRaised(dpy, dragiconlist[numdragicons].w);
     numdragicons++;
   }
@@ -665,7 +713,8 @@ void enddragging()
       rubbery=1-(c->scr->bh);
     XMoveWindow(dpy, c->parent, c->x=rubberx, c->y=rubbery);
     dragclient=NULL;
-    XUngrabServer(dpy);
+    if(!prefs.opaquemove)
+      ungrab_server();
     XUngrabPointer(dpy, CurrentTime);
     sendconfig(c);
   }
@@ -705,11 +754,13 @@ void startresizing(Client *c, XEvent *e)
   XGrabPointer(dpy, c->resize, False, Button1MotionMask|ButtonPressMask|
 	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync,
 	       c->scr->back, None, CurrentTime);
-  XGrabServer(dpy);
+  if(!prefs.opaqueresize)
+    grab_server(); 
   initrubber(e->xbutton.x_root, e->xbutton.y_root, c);
   rubberx0-=rubberw;
   rubbery0-=rubberh;
-  drawrubber();
+  if(!prefs.opaqueresize)
+    drawrubber();
 }
 
 void endresizing()
@@ -718,11 +769,26 @@ void endresizing()
   if(resizeclient) {
     Client *c=resizeclient;
     endrubber();
+    if(!prefs.opaqueresize)
+      ungrab_server();
     resizeclientwindow(c, rubberw, rubberh);
     resizeclient=NULL;
-    XUngrabServer(dpy);
     XUngrabPointer(dpy, CurrentTime);
   }
+}
+
+void abortfocus()
+{
+  if(activeclient) {
+    activeclient->active=False;
+    redrawclient(activeclient);
+    if(prefs.focus==FOC_CLICKTOTYPE)
+      XGrabButton(dpy, Button1, AnyModifier, activeclient->parent,
+		  True, ButtonPressMask, GrabModeSync, GrabModeAsync,
+		  None, wm_curs);
+    activeclient = NULL;
+  }
+  setfocus(None);
 }
 
 RETSIGTYPE sighandler(int sig)
@@ -762,14 +828,56 @@ void internal_broker(XEvent *e)
   }
 }
 
+static void update_clock(void *dontcare)
+{
+  if(server_grabs)
+    return;
+  call_out(prefs.titleclockinterval, 0, update_clock, dontcare);
+  scr = front;
+  do {
+    redrawmenubar(scr->menubar);
+    scr=scr->behind;
+  } while(scr!=front);
+}
+
+void cleanup()
+{
+  extern void free_prefs();
+  struct coevent *e;
+  flushmodules();
+  flushclients();
+  scr=front;
+  while(scr)
+    closescreen();
+  free_prefs();
+  if(dpy) {
+    XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
+    XFlush(dpy);
+    XCloseDisplay(dpy);
+  }
+  while((e = eventlist)) {
+    eventlist = e->next;
+    free(e);
+  }
+  if(x_server)
+    free(x_server);
+}
+
 int main(int argc, char *argv[])
 {
   int x_fd, sc;
   static Argtype array[3];
   struct RDArgs *ra;
 
+#ifdef USE_FONTSETS
+  setlocale(LC_CTYPE, "");
+  setlocale(LC_TIME, "");
+#endif
+
   main_argv=argv;
   progname=argv[0];
+
+  atexit(cleanup);
 
   memset(array, 0, sizeof(array));
   initargs(argc, argv);
@@ -779,7 +887,9 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
-  x_server = XDisplayName(array[1].ptr);
+  x_server = strdup(XDisplayName(array[1].ptr));
+
+  XrmInitialize();
 
   if(!(dpy = XOpenDisplay(array[1].ptr))) {
     fprintf(stderr, "%s: cannot connect to X server %s\n", progname, x_server);
@@ -819,7 +929,7 @@ int main(int argc, char *argv[])
 
   init_modules();
   read_rc_file(array[0].ptr, !array[2].num);
-
+  if( prefs.titleclockinterval < 1 ) prefs.titleclockinterval = 1;
   FreeArgs(ra);
 
   if (signal(SIGTERM, sighandler) == SIG_IGN)
@@ -857,6 +967,9 @@ int main(int argc, char *argv[])
 
   initting = 0;
 
+  if(prefs.titlebarclock)
+    call_out(0, 0, update_clock, NULL);
+
   while(!signalled) {
     fd_set rfds;
     struct timeval t;
@@ -886,14 +999,16 @@ int main(int argc, char *argv[])
       switch(event.type) {
       case Expose:
 	if(!event.xexpose.count) {
-	  if(rubberclient || boundingscr) drawrubber();
+	  if((rubberclient || boundingscr)&&!prefs.opaquemove
+             &&!prefs.opaqueresize) 
+            drawrubber();
 	  if(c)
 	    redraw(c, event.xexpose.window);
 	  else if(i)
 	    redrawicon(i, event.xexpose.window);
 	  else if(scr)
 	    redrawmenubar(event.xexpose.window);
-	  if(rubberclient || boundingscr) drawrubber();
+	  if((rubberclient || boundingscr)&&!prefs.opaquemove) drawrubber();
 	}
 	break;
       case CreateNotify:
@@ -997,6 +1112,7 @@ int main(int argc, char *argv[])
       case CirculateNotify:
       case GravityNotify:
       case NoExpose:
+      case GraphicsExpose:
 	break;
       case ClientMessage:
 	if(c)
@@ -1011,6 +1127,9 @@ int main(int argc, char *argv[])
 	  }
 	break;
       case ConfigureRequest:
+	if(XFindContext(dpy, event.xconfigurerequest.window, client_context,
+			(XPointer*)&c))
+	  c = NULL;
 	if(c && event.xconfigurerequest.window==c->window &&
 	   c->parent!=c->scr->root) {
 	  extern void resizeclientwindow(Client *c, int, int);
@@ -1207,6 +1326,7 @@ int main(int argc, char *argv[])
 	    else
 	      gadgetclicked(c, event.xbutton.window, &event);
 	  } else if(i && event.xbutton.window==i->window) {
+	    abortfocus();
 	    if(i->selected && (event.xbutton.time-last_icon_click)<dblClickTime) {
 	      do_icon_double_click(i->scr);
 	    } else {
@@ -1225,6 +1345,7 @@ int main(int argc, char *argv[])
 	    startscreendragging(scr, &event);
 	  }
 	  else if(scr&&scr->back==event.xbutton.window) {
+	    abortfocus();
 	    startbounding(scr, scr->back, &event);
 	  } else ;
 	else if(event.xbutton.button==3) {
@@ -1284,7 +1405,8 @@ int main(int argc, char *argv[])
 	} while(XCheckTypedEvent(dpy, MotionNotify, &event));
 	if(dragclient) {
 	  scr=dragclient->scr;
-	  drawrubber();
+	  if(!prefs.opaquemove)
+	    drawrubber();
 	  rubberx=motionx-rubberx0;
 	  rubbery=motiony-rubbery0;
 	  if(!forcemoving) {
@@ -1305,7 +1427,13 @@ int main(int argc, char *argv[])
 		rubbery=0;
 	    }
 	  }
-	  drawrubber();
+	  if(prefs.opaquemove) {
+	    if(rubbery<=-(c->scr->bh))
+	      rubbery=1-(c->scr->bh);
+	    XMoveWindow(dpy, c->parent, c->x=rubberx, c->y=rubbery);
+	  } else {
+	    drawrubber();
+	  }
 	} else if(resizeclient) {
 	  int rw=rubberw, rh=rubberh;
 	  scr=resizeclient->scr;
@@ -1331,11 +1459,19 @@ int main(int argc, char *argv[])
 	      rh=resizeclient->sizehints.min_height;
 	    rh+=resizeclient->frameheight;
 	  }
-	  if(rw!=rubberw || rh!=rubberh) {
-	    drawrubber();
-	    rubberw=rw;
-	    rubberh=rh;
-	    drawrubber();
+          if(rw!=rubberw || rh!=rubberh) {
+            if(prefs.opaqueresize) {
+              Client *c = resizeclient;
+              extern void resizeclientwindow(Client *c, int, int);
+              rubberw=rw;
+              rubberh=rh;
+              resizeclientwindow(c, rubberw, rubberh);
+            } else {
+              drawrubber();
+              rubberw=rw;
+              rubberh=rh;
+              drawrubber();
+            }
 	  }
 	} else if(dragiconlist) {
 	  int i;
@@ -1379,6 +1515,20 @@ int main(int argc, char *argv[])
 			&dummy_w, &dummy_h, &dummy_bw, &dummy_d))
 	  propertychange(c, event.xproperty.atom);
 	break;
+      case FocusOut:
+	/* Ignore */
+	break;
+      case FocusIn:
+	if(event.xfocus.detail == NotifyDetailNone &&
+	   prefs.focus == FOC_CLICKTOTYPE &&
+	   (scr = getscreenbyroot(event.xfocus.window))) {
+	  Window w;
+	  int rt;
+	  XGetInputFocus(dpy, &w, &rt);
+	  if(w == None)
+	    setfocus(scr->inputbox);
+	}
+	break;
       default:
 #ifdef HAVE_XSHAPE
 	if(shape_extn && event.type == shape_event_base + ShapeNotify) {
@@ -1420,13 +1570,13 @@ int main(int argc, char *argv[])
 	XPeekEvent(dpy, &event);
     }
   }
+
+  if(prefs.titlebarclock)
+    remove_call_out(update_clock, NULL);
+
   if(signalled)
     fprintf(stderr, "%s: exiting on signal\n", progname);
-  flushmodules();
-  flushclients();
-  XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
-  XFlush(dpy);
-  XCloseDisplay(dpy);
+
   exit(signalled? 0:1);
 }
 

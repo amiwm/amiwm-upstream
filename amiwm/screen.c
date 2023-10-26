@@ -11,7 +11,12 @@
 
 extern Display *dpy;
 extern Cursor wm_curs;
+#ifdef USE_FONTSETS
+extern XFontSet labelfontset;
+extern int labelfont_ascent;
+#else
 extern XFontStruct *labelfont;
+#endif
 extern char *progname;
 extern XContext screen_context, client_context, vroot_context;
 
@@ -145,6 +150,44 @@ static void scanwins()
   cleanupicons();
 }
 
+void closescreen(void)
+{
+  Scrn *dummy;
+
+  if(scr->behind == scr)
+    scr->behind = NULL;
+  else {
+    scr->upfront->behind=scr->behind;
+    scr->behind->upfront=scr->upfront;
+  }
+
+  XDeleteContext(dpy,scr->menubardepth,screen_context);
+  XDestroyWindow(dpy,scr->menubardepth);
+  XDeleteContext(dpy,scr->menubarparent,screen_context);
+  XDestroyWindow(dpy,scr->menubarparent);
+  XDeleteContext(dpy,scr->menubar,screen_context);
+  XDestroyWindow(dpy,scr->menubar);
+  if(scr->inputbox != None) {
+    XDeleteContext(dpy,scr->inputbox,screen_context);
+    XDestroyWindow(dpy,scr->inputbox);
+  }
+
+  XFreeGC(dpy,scr->rubbergc);
+  XFreeGC(dpy,scr->icongc);
+  XFreeGC(dpy,scr->gc);
+  XDeleteContext(dpy,scr->back,screen_context);
+  XDestroyWindow(dpy,scr->back);
+  free_icon_pms(&scr->default_tool_pms);
+  term_dri(&scr->dri, dpy, scr->cmap);
+  if(scr->iconcolorsallocated)
+    XFreeColors(dpy, scr->cmap, scr->iconcolor, scr->iconcolorsallocated, 0);
+  if(front==scr)
+    front=scr->behind;
+  dummy=scr->behind;
+  free(scr);
+  scr=dummy;
+}
+
 Scrn *openscreen(char *deftitle, Window root)
 {
   Scrn *s;
@@ -164,6 +207,7 @@ Scrn *openscreen(char *deftitle, Window root)
   s->depth = attr.depth;
   s->visual = attr.visual;
   s->number = XScreenNumberOfScreen(attr.screen);
+  s->inputbox = None;
 
   init_dri(&s->dri, dpy, s->root, s->cmap, True);
 
@@ -185,6 +229,38 @@ Scrn *openscreen(char *deftitle, Window root)
   XSaveContext(dpy, s->back, screen_context, (XPointer)s);
 
   gcv.background = s->dri.dri_Pens[BACKGROUNDPEN];
+
+#ifdef USE_FONTSETS
+  s->gc = XCreateGC(dpy, s->back, GCBackground, &gcv);
+
+  if(!labelfontset) {
+    char **missing_charsets = NULL;
+    int n_missing_charsets = 0;
+    labelfontset =  XCreateFontSet(dpy, label_font_name,
+				   &missing_charsets,
+				   &n_missing_charsets, NULL);
+    if(missing_charsets)
+      XFreeStringList(missing_charsets);
+    if(!labelfontset) { 
+      fprintf(stderr, "%s: cannot open font %s\n", progname, label_font_name);
+      labelfontset = s->dri.dri_FontSet;
+    }
+  }
+  {
+    XFontStruct **fsl;
+    char **fnl;
+    if(XFontsOfFontSet(labelfontset, &fsl, &fnl) < 1) {
+      fprintf(stderr, "%s: fontset %s is empty\n", progname,
+	      label_font_name);
+      exit(1);
+    }
+    labelfont_ascent = fsl[0]->ascent;
+    s->lh = fsl[0]->ascent+fsl[0]->descent;
+  }
+  gcv.foreground = s->dri.dri_Pens[TEXTPEN];
+
+  s->icongc = XCreateGC(dpy, s->back, GCForeground|GCBackground, &gcv);
+#else  
   gcv.font = s->dri.dri_Font->fid;
 
   s->gc = XCreateGC(dpy, s->back, GCBackground|GCFont, &gcv);
@@ -195,10 +271,12 @@ Scrn *openscreen(char *deftitle, Window root)
       labelfont = s->dri.dri_Font;
     }
 
+  s->lh = labelfont->ascent+labelfont->descent;
   gcv.font = labelfont->fid;
   gcv.foreground = s->dri.dri_Pens[TEXTPEN];
 
   s->icongc = XCreateGC(dpy, s->back, GCForeground|GCBackground|GCFont, &gcv);
+#endif
 
   gcv.function = GXinvert;
   gcv.subwindow_mode = IncludeInferiors;
@@ -207,11 +285,12 @@ Scrn *openscreen(char *deftitle, Window root)
 
   s->title = s->deftitle = deftitle;
 
-  s->default_tool_pm = None;
-  s->default_tool_pm2 = None;
+  s->default_tool_pms.pm = None;
+  s->default_tool_pms.pm2 = None;
+  s->default_tool_pms.cs.colors = NULL;
+  s->default_tool_pms.cs2.colors = NULL;
   s->default_tool_pm_w=0;
   s->default_tool_pm_h=0;
-  s->lh = labelfont->ascent+labelfont->descent;
 
   if(front) {
     s->behind=front;
@@ -233,36 +312,50 @@ void realizescreens(void)
   scr = front;
 
   do {
-    scr->fh = scr->dri.dri_Font->ascent+scr->dri.dri_Font->descent;
-    scr->bh=scr->fh+3;
-    scr->h2=(2*scr->bh)/10; scr->h3=(3*scr->bh)/10;
-    scr->h4=(4*scr->bh)/10; scr->h5=(5*scr->bh)/10;
-    scr->h6=(6*scr->bh)/10; scr->h7=(7*scr->bh)/10;
-    scr->h8=(8*scr->bh)/10;
-    createmenubar();
-    createdefaulticons();
+    if(!scr->realized) {
+      scr->fh = scr->dri.dri_Ascent+scr->dri.dri_Descent;
+      scr->bh=scr->fh+3;
+      scr->h2=(2*scr->bh)/10; scr->h3=(3*scr->bh)/10;
+      scr->h4=(4*scr->bh)/10; scr->h5=(5*scr->bh)/10;
+      scr->h6=(6*scr->bh)/10; scr->h7=(7*scr->bh)/10;
+      scr->h8=(8*scr->bh)/10;
+      createmenubar();
+      createdefaulticons();
 
-    XSelectInput(dpy, scr->root,
-		 SubstructureNotifyMask|SubstructureRedirectMask|
-		 KeyPressMask|KeyReleaseMask|
-		 ButtonPressMask|ButtonReleaseMask);
-    if(scr->back != scr->root)
-      XSelectInput(dpy, scr->back,
+      if (scr->inputbox == None && prefs.focus == FOC_CLICKTOTYPE) {
+	scr->inputbox = XCreateWindow(dpy, scr->back, 0, 0,
+				      scr->width, scr->height, 0, 0,
+				      InputOnly, CopyFromParent, 0, NULL);
+	XSaveContext(dpy, scr->inputbox, screen_context, (XPointer)scr);
+	XSelectInput(dpy, scr->inputbox, KeyPressMask|KeyReleaseMask);
+	XLowerWindow(dpy, scr->inputbox);
+	XMapWindow(dpy, scr->inputbox);
+      }
+
+      XSelectInput(dpy, scr->root,
 		   SubstructureNotifyMask|SubstructureRedirectMask|
 		   KeyPressMask|KeyReleaseMask|
-		   ButtonPressMask|ButtonReleaseMask);
+		   ButtonPressMask|ButtonReleaseMask|FocusChangeMask);
+      if(scr->back != scr->root)
+	XSelectInput(dpy, scr->back,
+		     SubstructureNotifyMask|SubstructureRedirectMask|
+		     KeyPressMask|KeyReleaseMask|
+		     ButtonPressMask|ButtonReleaseMask);
 
-    XStoreName(dpy, scr->back, scr->title);
-    XLowerWindow(dpy, scr->back);
-    XMapWindow(dpy, scr->back);
-
+      XStoreName(dpy, scr->back, scr->title);
+      XLowerWindow(dpy, scr->back);
+      XMapWindow(dpy, scr->back);
+    }
     scr=scr->behind;
   } while(scr!=front);
   do {  
-    scanwins();
-    if(!getvroot(scr->root)) {
-      init_dri(&scr->dri, dpy, scr->root, scr->cmap, True);
-      setvirtualroot(scr);
+    if(!scr->realized) {
+      scanwins();
+      if(!getvroot(scr->root)) {
+	init_dri(&scr->dri, dpy, scr->root, scr->cmap, True);
+	setvirtualroot(scr);
+      }
+      scr->realized=1;
     }
     scr=scr->behind;
   } while(scr!=front);

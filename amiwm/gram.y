@@ -1,11 +1,13 @@
 %{
 #include <X11/Xlib.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "prefs.h"
 #include "drawinfo.h"
 #include "screen.h"
 #include "icc.h"
+#include "style.h"
 extern void set_sys_palette(void);
 extern void set_mwb_palette(void);
 extern void set_schwartz_palette(void);
@@ -28,6 +30,19 @@ char *strdup(s) char *s;
 }
 #endif
 
+static void append_to(char **x, char *y)
+{
+  if(*x==NULL)
+    *x=y;
+  else {
+    char *t = malloc(strlen(y)+strlen(*x)+2);
+    sprintf(t, "%s\n%s", *x, y);
+    free(*x);
+    free(y);
+    *x=t;
+  }
+}
+
 static int ti_level=0;
 %}
 
@@ -49,6 +64,10 @@ static int ti_level=0;
 %token <num> FASTQUIT SIZEBORDER DEFAULTICON ICONDIR ICONPALETTE SCREENFONT
 %token <num> ICONFONT TOOLITEM FORCEMOVE SCREEN MODULE MODULEPATH
 %token <num> INTERSCREENGAP AUTORAISE FOCUS FOLLOWMOUSE CLICKTOTYPE SLOPPY
+%token <num> CUSTOMICONSONLY
+%token <num> TITLEBARCLOCK TITLECLOCKFORMAT
+%token <num> OPAQUEMOVE OPAQUERESIZE SCREENMENU STYLE CLASS TITLE ICONTITLE ICON
+%token <num> SHORTLABELICONS
 %token <ptr> STRING
 %token <num> NUMBER
 
@@ -88,7 +107,18 @@ stmt		: error
 		| MODULE string { create_module((front? front->upfront:NULL), $2, NULL); }
 		| INTERSCREENGAP NUMBER { prefs.borderwidth=$2; }
 		| AUTORAISE truth { prefs.autoraise=$2; }
+		| OPAQUEMOVE truth { prefs.opaquemove=$2; }
+		| OPAQUERESIZE truth { prefs.opaqueresize=$2; }
 		| FOCUS focuspolicy { prefs.focus=$2; }
+		| CUSTOMICONSONLY truth { prefs.customiconsonly = $2; }
+		| SHORTLABELICONS truth { prefs.shortlabelicons = $2; }
+		| TITLEBARCLOCK truth { prefs.titlebarclock = $2; }
+		| TITLECLOCKFORMAT string { prefs.titleclockformat = $2; }
+		| TITLECLOCKFORMAT NUMBER string { 
+					prefs.titleclockinterval=$2; 
+					prefs.titleclockformat=$3; }
+		| SCREENMENU truth { prefs.screenmenu=$2; }
+		| stylespec styleitems RIGHTBRACE
 		;
 
 toolsubmenu	: TOOLITEM string LEFTBRACE { add_toolitem($2, NULL, NULL, -1); ti_level=1; }
@@ -102,6 +132,29 @@ toolitem	: TOOLITEM string string { add_toolitem($2, $3, NULL, ti_level); }
 		| TOOLITEM string string string { add_toolitem($2, $3, $4, ti_level); }
 		| TOOLITEM SEPARATOR { add_toolitem(NULL, NULL, NULL, ti_level); }
 		;
+
+stylespec	: STYLE LEFTBRACE { Style *s = malloc(sizeof(Style));
+				    memset(s, 0, sizeof(*s));
+				    s->next=NULL; s->style_class=NULL;
+				    s->style_title=s->style_icon_title=NULL;
+				    s->icon_name=NULL;
+				    s->icon_pms.cs.colors=NULL;
+				    s->icon_pms.cs2.colors=NULL;
+				    if(prefs.firststyle)
+				      prefs.laststyle->next=s;
+				    else
+				      prefs.firststyle=s;
+				    prefs.laststyle=s; }
+
+styleitems	: styleitems styleitem
+		|
+		;
+
+styleitem	: CLASS string { append_to(&prefs.laststyle->style_class, $2);}
+		| TITLE string { append_to(&prefs.laststyle->style_title, $2);}
+		| ICONTITLE string { append_to(&prefs.laststyle->style_icon_title, $2);}
+		| ICON string { prefs.laststyle->icon_name=$2; }
+
 
 string		: STRING { $$ = strdup($1); }
 		;

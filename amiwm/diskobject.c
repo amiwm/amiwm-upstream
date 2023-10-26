@@ -25,7 +25,6 @@ extern struct Library *XLibBase;
 extern Display *dpy;
 extern char *progname;
 
-unsigned long iconcolor[256];
 char *iconcolorname[256];
 int iconcolormask;
 
@@ -46,14 +45,15 @@ static char *schwartziconcolorname[]={
   "#ff1919", "#ffff00", "#727d92", "#00c800"
 };
 
-Pixmap image_to_pixmap_scr(Scrn *scr, struct Image *im, int width, int height)
+Pixmap image_to_pixmap_scr(Scrn *scr, struct Image *im, int width, int height,
+			   struct ColorStore *cs)
 {
   return image_to_pixmap(dpy, scr->back, scr->gc,
 			 scr->dri.dri_Pens[BACKGROUNDPEN],
-			 iconcolor, iconcolormask, im, width, height);
+			 scr->iconcolor, iconcolormask, im, width, height, cs);
 }
 
-void load_do(const char *filename, Pixmap *p1, Pixmap *p2)
+void load_do(const char *filename, struct IconPixmaps *ip)
 {
   struct DiskObject *dobj;
 #ifdef AMIGAOS
@@ -72,12 +72,12 @@ void load_do(const char *filename, Pixmap *p1, Pixmap *p2)
 #endif
   fn[strlen(fn)-5]=0;
   if((dobj=GetDiskObject(fn))) {
-    *p1=image_to_pixmap_scr(scr, (struct Image *)dobj->do_Gadget.GadgetRender,
-			    dobj->do_Gadget.Width, dobj->do_Gadget.Height);
-    *p2=image_to_pixmap_scr(scr, (struct Image *)dobj->do_Gadget.SelectRender,
-			    dobj->do_Gadget.Width, dobj->do_Gadget.Height);
+    ip->pm=image_to_pixmap_scr(scr, (struct Image *)dobj->do_Gadget.GadgetRender,
+			       dobj->do_Gadget.Width, dobj->do_Gadget.Height, &ip->cs);
+    ip->pm2=image_to_pixmap_scr(scr, (struct Image *)dobj->do_Gadget.SelectRender,
+				dobj->do_Gadget.Width, dobj->do_Gadget.Height, &ip->cs2);
     FreeDiskObject(dobj);
-  } else *p1=*p2=None;
+  } else ip->pm=ip->pm2=None;
 }
 
 void init_iconpalette()
@@ -92,7 +92,8 @@ void init_iconpalette()
       fprintf(stderr, "%s: cannot allocate color %s\n", progname, name);
       exit(1);
     }
-    iconcolor[i]=scrp.pixel;
+    scr->iconcolor[i]=scrp.pixel;
+    scr->iconcolorsallocated=i+1;
   }
 }
 

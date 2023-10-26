@@ -323,9 +323,16 @@ void redraw(Client *c, Window w)
   } else if(w==c->drag) {
     XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[c->active?FILLTEXTPEN:TEXTPEN]);
     XSetBackground(dpy, scr->gc, scr->dri.dri_Pens[c->active?FILLPEN:BACKGROUNDPEN]);
+#ifdef USE_FONTSETS
+    if(c->title)
+      XmbDrawImageString(dpy, w, scr->dri.dri_FontSet, scr->gc,
+			 11, 1+scr->dri.dri_Ascent,
+			 c->title, strlen(c->title));
+#else
     if(c->title.value)
-      XDrawImageString(dpy, w, scr->gc, 11, 1+scr->dri.dri_Font->ascent,
+      XDrawImageString(dpy, w, scr->gc, 11, 1+scr->dri.dri_Ascent,
 		       (char *)c->title.value, c->title.nitems);
+#endif
     XSetForeground(dpy, scr->gc, scr->dri.dri_Pens[SHINEPEN]);
     XDrawLine(dpy, w, scr->gc, 0, 0, c->dragw-1, 0);
     XDrawLine(dpy, w, scr->gc, 0, 0, 0, scr->bh-2);
@@ -496,26 +503,44 @@ void gadgetaborted(Client *c)
   clickclient=NULL;
 }
 
+static Client *topmostmappedclient(Window *children, unsigned int nchildren)
+{
+  int n;
+  Client *c;
+  for(n=nchildren-1; n>=0; --n)
+    if((!XFindContext(dpy, children[n], client_context, (XPointer*)&c)) &&
+       (children[n]==c->parent || children[n]==c->window) &&
+       c->state==NormalState)
+      return c;
+  return NULL;
+}
+
+static Client *bottommostmappedclient(Window *children, unsigned int nchildren)
+{
+  int n;
+  Client *c;
+  for(n=0; n<nchildren; n++)
+    if((!XFindContext(dpy, children[n], client_context, (XPointer*)&c)) &&
+       children[n]==c->parent && c->state==NormalState)
+      return c;
+  return NULL;
+}
+
 void raiselowerclient(Client *c, int place)
 {
-  Client *c2;
   Window r,p,*children;
   unsigned int nchildren;
   if(place!=PlaceOnTop &&
      XQueryTree(dpy, scr->back, &r, &p, &children, &nchildren)) {
-    if(place==PlaceOnBottom || children[nchildren-1]==c->parent ||
-       children[nchildren-1]==c->window) {
-      int n;
-      for(n=0; n<nchildren; n++)
-	if((!XFindContext(dpy, children[n], client_context, (XPointer*)&c2)) &&
-	   children[n]==c2->parent)
-	  break;
-      if(n<nchildren) {
+    if(place==PlaceOnBottom || topmostmappedclient(children, nchildren)==c) {
+      Client *c2 = bottommostmappedclient(children, nchildren);
+      if(c2 != NULL && c2 != c) {
 	Window ws[2];
-	ws[0]=children[n];
+	ws[0]=c2->parent;
 	ws[1]=c->parent;
 	XRestackWindows(dpy, ws, 2);
-      }
+      } else if(place!=PlaceOnBottom)
+	XRaiseWindow(dpy, c->parent);
     } else
       XRaiseWindow(dpy, c->parent);
     if(children) XFree(children);

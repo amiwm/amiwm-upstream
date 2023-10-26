@@ -36,7 +36,7 @@ struct mcmd_keygrab {
 
 struct NewAppIcon {
   int x, y;
-  Pixmap pm1, pm2;
+  Pixmap pm1, pm2, pmm;
   char name[1];
 };
 

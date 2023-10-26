@@ -1,7 +1,7 @@
 .\" @(#)amiwm.1
 '\"macro stdmacro
 .nr X
-.TH amiwm 1 "14 Mar 1998"
+.TH amiwm 1 "19 Jul 2010"
 .SH NAME
 amiwm \- Amiga Workbench-like X Window Manager
 .SH SYNOPSIS
@@ -10,7 +10,7 @@ amiwm \- Amiga Workbench-like X Window Manager
 .SH DESCRIPTION
 .I amiwm
 is an X Window manager that tries to make your workstation look like
-an Amiga®.
+an Amiga\*R.
 
 .SH OPTIONS
 .I Amiwm 
@@ -43,7 +43,7 @@ It is relative to the IconDir.
 
 .SH IconPalette {system|magicwb|schwartz|\f1\*(lq\f3filename"}
 
-Selects either the Workbench® default palette, or the MagicWorkbench
+Selects either the Workbench\*R default palette, or the MagicWorkbench
 standard palette for use with icons.  The third option is a 16 color
 palette used on the "Eric Schwartz Productions CD Archive".  Alternatively,
 the filename of a PPM file representing the palette to use can be used.
@@ -61,6 +61,37 @@ Selects a font for icontitles.
         bartrimpen} \f1\*(lq\f3colorname"
 
 Modifies the colour scheme for the window manager.
+
+.SH CustomIconsOnly {yes|no}
+
+This prevent applications to display their own icons when in iconified state.
+Only icons defined in amiwmrc for each apps will be used.
+Because apps own icon are too different from one eachother.
+They comes in various sizes and themes. Some icons will be 32x32,
+while some other will be a 128x128 or even bigger .. By using this option,
+You have the possibility to decide which icon should be used for each app.  
+If no custom icons are defined at all, the def_tool.info will be used for 
+all iconified apps. Format is: style { class "myClass" icon "myIcon.info" }
+To find out a given program's class, use "xlsclients -l" to list all opened
+applications, and then use "xprop -id <0x0000000>" to list a 
+given app's properties. Use either WM_CLASS or WM_ICON_NAME strings in amiwmrc.
+
+.SH ShortLabelIcons {yes|no}
+
+This limit the length of the text for iconified programs. For example, if this 
+option is activated, an iconified program text will be limited to 8 chars + ".."
+Use this option if you don't want iconified program text to be loong strings..
+
+.SH TitleBarClock {yes|no}
+
+Enables a clock in the titlebar.  It displays the date and time.
+
+.SH TitleClockFormat [<number>] "time string"
+
+This lets you choose a new format to display the Title Bar Clock.
+The time string is formatted with the standard strftime() parameters.
+The default is "%c".  It has been found that "%a %b %e %Y   %l:%M %p" works
+well too.  Number is the update interval in seconds.  
 
 .SH ToolItem \f1\*(lq\f3name" \f1\*(lq\f3command" \f1\*(lq\f3hotkey"
 
@@ -141,5 +172,5 @@ Amiga and Workbench are registered trademarks of AMIGA International Inc.
 
 .SH AUTHOR
 Marcus Comstedt,
-.I marcus@lysator.liu.se
+.I marcus@mc.pp.se
 

@@ -46,7 +46,8 @@ static void lookup_meta()
 	  break;
 	}
   if(meta_mask == 0)
-    meta_mask = alt_mask;
+    meta_mask = (alt_mask? alt_mask :
+		 (switch_mask? switch_mask : Mod1Mask));
 }
 
 static void lookup_hotkey(struct hotkey *hk)

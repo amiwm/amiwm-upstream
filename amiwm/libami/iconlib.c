@@ -217,6 +217,157 @@ static struct Image *backfillimage(struct Image *im)
   return NULL;
 }
 
+#define GETBITS(v,n) do{if(bits<(n)){if(!srclen--)return dst-dst0;data=(data\
+<<8)|*src++;bits+=8;};v=(data>>(bits-(n)))&((1<<(n))-1);bits-=(n);}while(0)
+
+static LONG unpack_rle(unsigned char *src, LONG srclen, char *dst, LONG dstlen,
+		       int bpp, int comp)
+{
+  char *dst0 = dst;
+  unsigned char *srcn = src+srclen;
+  int bits=0, data=0;
+  if(!comp) {
+    if(srclen>dstlen)
+      srclen = dstlen;
+    memcpy(dst, src, srclen);
+    return srclen;
+  }
+  while(dstlen>0) {
+    int code;
+    GETBITS(code, 8);
+    if(code&0x80) {
+      char rpt;
+      GETBITS(rpt, bpp);
+      code -= 0x100;
+      if((dstlen-=(1-code))<0)
+	break;
+      do { *dst++ = rpt; } while(code++);
+    } else {
+      if((dstlen-=(code+1))<0)
+	break;
+      do GETBITS(*dst++, bpp); while(code--);
+    }
+  }
+  if(src != srcn)
+    fprintf(stderr, "Warning:  Left %d bytes unused.\n", srcn-src);
+  return dst-dst0;
+}
+
+static void decode_IMAG(unsigned char *buf, LONG len, int width, int height,
+			APTR *im)
+{
+  struct {
+    int transp, ncolors, flags, bodycomp, palcomp, bpp;
+    int bodybytes, palbytes;
+  } hdr;
+  char *dbuf;
+  struct Image *ii;
+
+  if(len<10)
+    return;
+
+  hdr.transp = *buf++;
+  hdr.ncolors = (*buf++)+1;
+  hdr.flags = *buf++;
+  hdr.bodycomp = *buf++;
+  hdr.palcomp = *buf++;
+  hdr.bpp = *buf++;
+  hdr.bodybytes = ((buf[0]<<8)|(buf[1]))+1;
+  hdr.palbytes = ((buf[2]<<8)|(buf[3]))+1;
+  buf+=4;
+  len -= 10;
+  if(!(hdr.flags&1))
+    hdr.transp = -1;
+  if(!(hdr.flags&2))
+    hdr.ncolors = 0;
+
+  if(hdr.bodybytes > len)
+    hdr.bodybytes = len;
+  if(hdr.palbytes+hdr.bodybytes > len)
+    hdr.palbytes = len-hdr.bodybytes;
+
+  if(hdr.bodycomp>1 || hdr.palcomp>1)
+    return;
+
+  if((dbuf = malloc(sizeof(struct Image)+width*height+3*hdr.ncolors+3))==NULL)
+    return;
+
+  /* body */
+  if(unpack_rle(buf, hdr.bodybytes, dbuf+sizeof(struct Image), width*height,
+		hdr.bpp, hdr.bodycomp) != width*height) {
+    free(dbuf);
+    return;
+  }
+  /* palette */
+  if(unpack_rle(buf+hdr.bodybytes, hdr.palbytes,
+		dbuf+sizeof(struct Image)+width*height+3, 3*hdr.ncolors,
+		8, hdr.palcomp) != 3*hdr.ncolors) {
+    free(dbuf);
+    return;
+  }
+
+  if(*im != NULL)
+    free(*im);
+  *im = (APTR) (ii = (struct Image *)dbuf);
+  dbuf += sizeof(struct Image);
+  ii->ImageData = (UWORD *)dbuf;
+  dbuf += width*height;
+
+  *dbuf++ = hdr.transp;
+  *dbuf++ = hdr.ncolors-1;
+  *dbuf++ = hdr.flags;
+
+  ii->LeftEdge = ii->TopEdge = 0;
+  ii->Width = width;
+  ii->Height = height;
+  ii->Depth = -1;
+  ii->PlanePick = ii->PlaneOnOff = 0;
+  ii->NextImage = NULL;
+
+  return;
+}
+
+static void decode_glowicon(struct DiskObject *diskobj, char *glow, LONG len)
+{
+  int imgno=0, gotface=0;
+  struct { char width, height; UWORD dunno1, dunno2; } face;
+  while(len>=8) {
+    ULONG id = getu32(&glow);
+    LONG clen = get32(&glow);
+    char *chunk = glow;
+    len -= 8;
+    if(clen<0)
+      clen = len;
+    if(clen>len)
+      break;
+    switch(id) {
+     case 0x46414345: /* FACE */
+       if(clen>=6) {
+	 face.width = 1+*chunk++;
+	 face.height = 1+*chunk++;
+	 face.dunno1 = getu16(&chunk);
+	 face.dunno2 = getu16(&chunk);
+	 gotface = 1;
+	 diskobj->do_Gadget.Width = face.width;
+	 diskobj->do_Gadget.Height = face.height;
+       break;
+       }
+       break;
+     case 0x494d4147: /* IMAG */
+       if(!gotface || imgno>1)
+	 break;
+       decode_IMAG((unsigned char *)chunk, clen, face.width, face.height,
+		   (imgno++? &diskobj->do_Gadget.SelectRender :
+		    &diskobj->do_Gadget.GadgetRender));
+       break;
+    }
+    if(clen&1)
+      clen++;
+    len -= clen;
+    glow += clen;
+  }
+}
+
 static struct DiskObject *int_load_do(char *filename)
 {
   FILE *f;
@@ -313,6 +464,19 @@ static struct DiskObject *int_load_do(char *filename)
 	if(1==fread(buf, 6, 1, f)) {
 	  diskobj->do_DrawerData->dd_Flags=getu32(&p);
 	  diskobj->do_DrawerData->dd_ViewModes=getu16(&p);
+	}
+      }
+
+      if(diskobj->do_Version) {
+	/* Check for GlowIcon */
+	char buf[8], *p = buf, *glowicon;
+	LONG len;
+	if(1==fread(buf, 4, 1, f) && !strncmp(buf, "FORM", 4) &&
+	   1==fread(buf, 8, 1, f) && !strncmp(buf+4, "ICON", 4) &&
+	   (len = get32(&p))>4 && (glowicon = malloc(len))!=NULL) {
+	  if(1==fread(glowicon, len-4, 1, f))
+	    decode_glowicon(diskobj, glowicon, len-4);
+	  free(glowicon);
 	}
       }
 

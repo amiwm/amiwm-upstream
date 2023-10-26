@@ -6,7 +6,7 @@
 #include "alloc.h"
 
 Window md_create_appicon(Window p, int x, int y, char *name,
-			 Pixmap pm1, Pixmap pm2)
+			 Pixmap pm1, Pixmap pm2, Pixmap pmm)
 {
   char *data;
   Window w;
@@ -18,7 +18,7 @@ Window md_create_appicon(Window p, int x, int y, char *name,
   if(nai==NULL) return None;
 #endif
   nai->x=x; nai->y=y;
-  nai->pm1=pm1; nai->pm2=pm2;
+  nai->pm1=pm1; nai->pm2=pm2; nai->pmm=pmm;
   strcpy(nai->name, name);
   res=md_command(p, MCMD_CREATEAPPICON, nai, sizeof(struct NewAppIcon)+l,
 		 &data);
@@ -38,7 +38,7 @@ Window md_create_appicon(Window p, int x, int y, char *name,
 }
 
 Pixmap md_image_to_pixmap(Window w, unsigned long bgcolor, struct Image *i,
-			  int width, int height)
+			  int width, int height, struct ColorStore *cs)
 {
   Display *dpy = md_display();
   static GC gc = None;
@@ -56,7 +56,7 @@ Pixmap md_image_to_pixmap(Window w, unsigned long bgcolor, struct Image *i,
     iconcolormask = (res/sizeof(unsigned long))-1;
   }
   pm = image_to_pixmap(md_display(), w, gc, bgcolor, iconcolor, iconcolormask,
-		       i, width, height);
+		       i, width, height, cs);
   return pm;
 }
 

@@ -1,3 +1,6 @@
+#ifndef LIBAMI_H
+#define LIBAMI_H
+
 #include <X11/Xlib.h>
 #include <X11/Xmd.h>
 
@@ -5,11 +8,14 @@
 #include <exec/types.h>
 #include <exec/nodes.h>
 #include <exec/lists.h>
+#include <utility/hooks.h>
 #include <dos/dos.h>
 #include <dos/rdargs.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/icon.h>
+#include <proto/iffparse.h>
+#include <proto/locale.h>
 #else
 
 #define GLOBAL	extern
@@ -164,6 +170,30 @@ struct DiskObject {
   LONG do_StackSize;
 };
 
+struct Hook
+{
+  struct MinNode h_MinNode;
+  ULONG	   (*h_Entry)();	/* assembler entry point */
+  ULONG	   (*h_SubEntry)();	/* often HLL entry point */
+  APTR	   h_Data;		/* owner specific	 */
+};
+
+struct IFFHandle
+{
+  ULONG iff_Stream;
+  ULONG iff_Flags;
+  LONG  iff_Depth;	/*  Depth of context stack */
+  /* private fields */
+  struct Hook *iff_Hook;
+};
+
+struct IFFStreamCmd
+{
+    LONG sc_Command;	/* Operation to be performed (IFFCMD_) */
+    APTR sc_Buf;	/* Pointer to data buffer	       */
+    LONG sc_NBytes;	/* Number of bytes to be affected      */
+};
+
 
 #define RDAB_STDIN	0	/* Use "STDIN" rather than "COMMAND LINE" */
 #define RDAF_STDIN	1
@@ -189,6 +219,35 @@ struct DiskObject {
 #define ERROR_TOO_MANY_ARGS  118
 #define ERROR_LINE_TOO_LONG  120
 
+#define IFFERR_EOF	  -1L	/* Reached logical end of file	*/
+#define IFFERR_EOC	  -2L	/* About to leave context	*/
+#define IFFERR_NOSCOPE	  -3L	/* No valid scope for property	*/
+#define IFFERR_NOMEM	  -4L	/* Internal memory alloc failed */
+#define IFFERR_READ	  -5L	/* Stream read error		*/
+#define IFFERR_WRITE	  -6L	/* Stream write error		*/
+#define IFFERR_SEEK	  -7L	/* Stream seek error		*/
+#define IFFERR_MANGLED	  -8L	/* Data in file is corrupt	*/
+#define IFFERR_SYNTAX	  -9L	/* IFF syntax error		*/
+#define IFFERR_NOTIFF	  -10L	/* Not an IFF file		*/
+#define IFFERR_NOHOOK	  -11L	/* No call-back hook provided	*/
+#define IFF_RETURN2CLIENT -12L	/* Client handler normal return */
+
+#define IFFF_READ	0L			 /* read mode - default    */
+#define IFFF_WRITE	1L			 /* write mode		   */
+#define IFFF_RWBITS	(IFFF_READ | IFFF_WRITE) /* read/write bits	   */
+#define IFFF_FSEEK	(1L<<1)		 /* forward seek only	   */
+#define IFFF_RSEEK	(1L<<2)		 /* random seek	   */
+#define IFFF_RESERVED	0xFFFF0000L		 /* Don't touch these bits */
+
+#define IFFCMD_INIT	0	/* Prepare the stream for a session */
+#define IFFCMD_CLEANUP	1	/* Terminate stream session	    */
+#define IFFCMD_READ	2	/* Read bytes from stream	    */
+#define IFFCMD_WRITE	3	/* Write bytes to stream	    */
+#define IFFCMD_SEEK	4	/* Seek on stream		    */
+#define IFFCMD_ENTRY	5	/* You just entered a new context   */
+#define IFFCMD_EXIT	6	/* You're about to leave a context  */
+#define IFFCMD_PURGELCI 7	/* Purge a LocalContextItem	    */
+
 
 extern void FreeArgs(struct RDArgs *);
 extern LONG ReadItem(STRPTR, LONG, struct CSource *);
@@ -213,10 +272,60 @@ extern BOOL PrintFault(LONG, UBYTE *);
 extern LONG IoErr();
 extern LONG SetIoErr(LONG);
 
+extern struct IFFHandle *AllocIFF( void );
+extern LONG OpenIFF( struct IFFHandle *iff, long rwMode );
+extern LONG ParseIFF( struct IFFHandle *iff, long control );
+extern void CloseIFF( struct IFFHandle *iff );
+extern void FreeIFF( struct IFFHandle *iff );
+
+extern LONG ReadChunkBytes( struct IFFHandle *iff, APTR buf, long numBytes );
+extern LONG WriteChunkBytes( struct IFFHandle *iff, APTR buf, long numBytes );
+extern LONG ReadChunkRecords( struct IFFHandle *iff, APTR buf, long bytesPerRecord, long numRecords );
+extern LONG WriteChunkRecords( struct IFFHandle *iff, APTR buf, long bytesPerRecord, long numRecords );
+
+extern LONG PushChunk( struct IFFHandle *iff, long type, long id, long size );
+extern LONG PopChunk( struct IFFHandle *iff );
+
+extern LONG EntryHandler( struct IFFHandle *iff, long type, long id, long position, struct Hook *handler, APTR object );
+extern LONG ExitHandler( struct IFFHandle *iff, long type, long id, long position, struct Hook *handler, APTR object );
+
+extern LONG PropChunk( struct IFFHandle *iff, long type, long id );
+extern LONG PropChunks( struct IFFHandle *iff, LONG *propArray, long numPairs );
+extern LONG StopChunk( struct IFFHandle *iff, long type, long id );
+extern LONG StopChunks( struct IFFHandle *iff, LONG *propArray, long numPairs );
+extern LONG CollectionChunk( struct IFFHandle *iff, long type, long id );
+extern LONG CollectionChunks( struct IFFHandle *iff, LONG *propArray, long numPairs );
+extern LONG StopOnExit( struct IFFHandle *iff, long type, long id );
+
+extern struct StoredProperty *FindProp( struct IFFHandle *iff, long type, long id );
+extern struct CollectionItem *FindCollection( struct IFFHandle *iff, long type, long id );
+extern struct ContextNode *FindPropContext( struct IFFHandle *iff );
+extern struct ContextNode *CurrentChunk( struct IFFHandle *iff );
+extern struct ContextNode *ParentChunk( struct ContextNode *contextNode );
+
+extern struct LocalContextItem *AllocLocalItem( long type, long id, long ident, long dataSize );
+extern APTR LocalItemData( struct LocalContextItem *localItem );
+extern void SetLocalItemPurge( struct LocalContextItem *localItem, struct Hook *purgeHook );
+extern void FreeLocalItem( struct LocalContextItem *localItem );
+extern struct LocalContextItem *FindLocalItem( struct IFFHandle *iff, long type, long id, long ident );
+extern LONG StoreLocalItem( struct IFFHandle *iff, struct LocalContextItem *localItem, long position );
+extern void StoreItemInContext( struct IFFHandle *iff, struct LocalContextItem *localItem, struct ContextNode *contextNode );
+
+extern void InitIFF( struct IFFHandle *iff, long flags, struct Hook *streamHook );
+
+extern LONG GoodID( long id );
+extern LONG GoodType( long type );
+extern STRPTR IDtoStr( long id, STRPTR buf );
+
 #endif
 
+extern LONG OpenIFFasFile( struct IFFHandle *iff, char *fn, char *mode );
+
+struct ColorStore { unsigned long *colors; int ncolors; Colormap cmap; };
 extern Pixmap image_to_pixmap(Display *, Window, GC, unsigned long,
-			      unsigned long *, int, struct Image *, int, int);
+			      unsigned long *, int, struct Image *, int, int,
+			      struct ColorStore *);
+extern void free_color_store(Display *, struct ColorStore *);
 
 typedef union { LONG num; APTR ptr; } Argtype;
 
@@ -273,10 +382,12 @@ extern void cx_hotkey(KeySym, unsigned int, int, int,
 
 /* mdicon.c */
 extern Window md_create_appicon(Window, int, int, char *,
-				Pixmap, Pixmap);
+				Pixmap, Pixmap, Pixmap);
 extern Pixmap md_image_to_pixmap(Window, unsigned long, struct Image *,
-				 int, int);
+				 int, int, struct ColorStore *);
 extern char *get_current_icondir(void);
 
 /* mdwindow.c */
 extern int md_set_appwindow(Window);
+
+#endif

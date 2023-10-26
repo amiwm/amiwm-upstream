@@ -1,5 +1,6 @@
 #include "libami.h"
 #include "module.h"
+#include <string.h>
 
 int md_rotate_screen(XID id)
 {

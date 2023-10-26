@@ -33,7 +33,7 @@
 #include "icon.h"
 #include "version.h"
 
-extern XContext client_context, icon_context;
+extern XContext client_context, icon_context, screen_context;
 
 extern FILE *rcfile;
 extern Display *dpy;
@@ -46,7 +46,7 @@ extern void raiselowerclient(Client *, int);
 extern void wberror(Scrn *, char *);
 
 extern Icon *createappicon(struct module *, Window, char *,
-			   Pixmap, Pixmap, int, int);
+			   Pixmap, Pixmap, Pixmap, int, int);
 
 extern struct Item *own_items(struct module *, Scrn *,
 			       int, int, int, struct Item *);
@@ -334,7 +334,6 @@ void mod_menuselect(struct module *m, int menu, int item, int subitem)
 static void handle_module_cmd(struct module *m, char *data, int data_len)
 {
   extern Scrn *getscreen(Window);
-  extern unsigned long iconcolor[];
   extern int iconcolormask;
   XID id=m->mcmd.id;
   Client *c;
@@ -413,7 +412,7 @@ static void handle_module_cmd(struct module *m, char *data, int data_len)
       struct NewAppIcon *nai=(struct NewAppIcon *)data;
       Window w=None;
       Icon *i=createappicon(m, id, nai->name,
-			    nai->pm1, nai->pm2, nai->x, nai->y);
+			    nai->pm1, nai->pm2, nai->pmm, nai->x, nai->y);
       if(i!=NULL) w=i->window;
       reply_module(m, (char *)&w, sizeof(w));
     } else
@@ -447,7 +446,14 @@ static void handle_module_cmd(struct module *m, char *data, int data_len)
     reply_module(m, prefs.icondir, strlen(prefs.icondir)+1);
     break;
   case MCMD_GETICONPALETTE:
-    reply_module(m, (void *)iconcolor,
+    if(!XFindContext(dpy, id, client_context, (XPointer*)&c)) {
+      scr=c->scr;
+    } else
+      if(XFindContext(dpy, id, screen_context, (XPointer*)&scr)) {
+	reply_module(m, NULL, -1);
+	break;
+      }
+    reply_module(m, (void *)scr->iconcolor,
 		 (iconcolormask+1)*sizeof(unsigned long));
     break;
   case MCMD_MANAGEMENU:
@@ -477,8 +483,12 @@ static void module_input_callback(struct module *m)
     return;
   }
   r=read(m->in_fd, buffer, sizeof(buffer));
-  if(r<0 && errno!=EINTR) {
-    perror("module");
+  if(r==0 || (r<0 && errno!=EINTR)) {
+    if(r<0)
+      perror("module");
+    else
+      fprintf(stderr, "module %d exited!?\n", (int)m->pid);
+    remove_fd_from_set(m->in_fd);
     close(m->in_fd);
     close(m->out_fd);
     m->in_fd=m->out_fd=-1;

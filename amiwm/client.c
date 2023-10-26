@@ -2,6 +2,7 @@
 #include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "drawinfo.h"
 #include "screen.h"
@@ -170,6 +171,8 @@ void getstate(Client *c)
 
 Client *createclient(Window w)
 {
+  extern void checkstyle(Client *c);
+
   XWindowAttributes attr;
   Client *c;
 
@@ -188,9 +191,29 @@ Client *createclient(Window w)
   c->gravity = NorthWestGravity;
   c->reparenting = 0;
   XSelectInput(dpy, c->window, PropertyChangeMask);
+#ifdef USE_FONTSETS
+  {
+    XTextProperty prop;
+    c->title = NULL;
+    if(XGetWMName(dpy, c->window, &prop) && prop.value) {
+      char **list;
+      int n;
+      if(XmbTextPropertyToTextList(dpy, &prop, &list, &n) >= Success) {
+	if(n > 0)
+	  c->title = strdup(list[0]);
+	XFreeStringList(list);
+      }
+      XFree(prop.value);
+    }
+  }
+#else
   XGetWMName(dpy, c->window, &c->title);
+#endif
+  c->style = NULL;
+  checkstyle(c);
   checksizehints(c);
-  c->zoomx=c->zoomy=0;
+  c->zoomx=0;
+  c->zoomy=scr->bh;
   if(c->sizehints.width_inc) {
     c->zoomw=scr->width-c->sizehints.base_width-22;
     c->zoomw-=c->zoomw%c->sizehints.width_inc;
@@ -202,7 +225,7 @@ Client *createclient(Window w)
   } else
     c->zoomw=attr.width;
   if(c->sizehints.height_inc) {
-    c->zoomh=scr->height-c->sizehints.base_height-scr->bh-10;
+    c->zoomh=scr->height-c->sizehints.base_height-scr->bh-c->zoomy-2;
     c->zoomh-=c->zoomh%c->sizehints.height_inc;
     c->zoomh+=c->sizehints.base_height;
     if(c->zoomh>c->sizehints.max_height)
@@ -237,8 +260,13 @@ void rmclient(Client *c)
       XInstallColormap(dpy, scr->cmap);
     } else if(prefs.focus==FOC_CLICKTOTYPE)
       XUngrabButton(dpy, Button1, AnyModifier, c->parent);
+#ifdef USE_FONTSETS
+    if(c->title)
+      free(c->title);
+#else
     if(c->title.value)
       XFree(c->title.value);
+#endif
     if(c->parent != c->scr->root) {
       XDestroyWindow(dpy, c->parent);
       XDeleteContext(dpy, c->parent, client_context);
@@ -260,6 +288,18 @@ void rmclient(Client *c)
     if(c->window)
       XDeleteContext(dpy, c->window, client_context);
     free(c);
+}
+
+int screen_has_clients()
+{
+  int n = 0;
+  Client *c = clients;
+  while(c) {
+    if(c->scr == scr)
+      n++;
+    c = c->next;
+  }
+  return n;
 }
 
 void flushclients()
