@@ -1,5 +1,6 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "drawinfo.h"
@@ -108,6 +109,7 @@ void sendconfig(Client *c)
   ce.above = None;
   ce.override_redirect = 0;
   XSendEvent(dpy, c->window, False, StructureNotifyMask, (XEvent*)&ce);
+  XSync(dpy, False);
 }
 
 void scrsendconfig(Scrn *s)

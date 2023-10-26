@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "drawinfo.h"
+#include "libami.h"
 
 #ifdef AMIGAOS
 #include <pragmas/xlib_pragmas.h>
@@ -46,11 +47,14 @@ struct choice *selected=NULL;
 
 struct DrawInfo dri;
 
+struct RDArgs *ra=NULL;
+
 void selection(int n)
 {
   printf("%d\n", n);
   XDestroyWindow(dpy, mainwin);
   XCloseDisplay(dpy);
+  FreeArgs(ra);
   exit(0);
 }
 
@@ -60,6 +64,7 @@ void *myalloc(size_t s)
   if(p)
     return p;
   fprintf(stderr, "%s: out of memory!\n", progname);
+  FreeArgs(ra);
   exit(1);
 }
 
@@ -188,24 +193,27 @@ int main(int argc, char *argv[])
   static XTextProperty txtprop1, txtprop2;
   int x, y, extra=0, n=0;
   struct choice *c;
+  Argtype array[3], *atp;
 
   progname=argv[0];
-  if(argc<4) {
-    fprintf(stderr, "Usage:\n%s TITLE/A,BODY/A,GADGETS/M\n", progname);
+  initargs(argc, argv);
+  if(!(ra=ReadArgs("TITLE/A,BODY/A,GADGETS/M", (LONG *)array, NULL))) {
+    PrintFault(IoErr(), progname);
     exit(1);
   }
   if(!(dpy = XOpenDisplay(NULL))) {
     fprintf(stderr, "%s: cannot connect to X server %s\n", progname,
 	    XDisplayName(NULL));
+    FreeArgs(ra);
     exit(1);
   }
   root = RootWindow(dpy, DefaultScreen(dpy));
   XGetWindowAttributes(dpy, root, &attr);
   init_dri(&dri, root, attr.colormap, False);
 
-  split(argv[2], "\n", addline);
-  for(x=3; x<argc; x++)
-    split(argv[x], "|\n", addchoice);
+  split(array[1].ptr, "\n", addline);
+  for(atp=array[2].ptr; atp->ptr; atp++)
+    split(atp->ptr, "|\n", addchoice);
 
   totw+=BUT_EXTSPACE+BUT_EXTSPACE+BUT_INTSPACE*(nchoices-1);
   toth+=2*(dri.dri_Font->ascent+dri.dri_Font->descent)+TXT_TOPSPACE+
@@ -253,7 +261,7 @@ int main(int argc, char *argv[])
     x+=c->w+BUT_BUTSPACE+BUT_INTSPACE;
   }
   size_hints.flags = PResizeInc;
-  txtprop1.value=(unsigned char *)argv[1];
+  txtprop1.value=(unsigned char *)array[0].ptr;
   txtprop2.value=(unsigned char *)"RequestChoice";
   txtprop2.encoding=txtprop1.encoding=XA_STRING;
   txtprop2.format=txtprop1.format=8;
@@ -303,4 +311,5 @@ int main(int argc, char *argv[])
       break;
     }
   }
+  FreeArgs(ra);
 }

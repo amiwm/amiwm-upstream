@@ -72,7 +72,10 @@ static int md_read(void *ptr, int len)
 static int md_int_load(int len)
 {
   if(len>=md_int_len)
-    md_int_buf=realloc(md_int_buf, md_int_len=len+1);
+    if(md_int_buf!=NULL)
+      md_int_buf=realloc(md_int_buf, md_int_len=len+1);
+    else
+      md_int_buf=malloc(md_int_len=len+1);
   md_int_buf[len]='\0';
   return md_read(md_int_buf, len);
 }

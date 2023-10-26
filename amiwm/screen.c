@@ -83,6 +83,7 @@ static void scanwins()
 	    adjusticon(c->icon);
 	    XMapWindow(dpy, c->icon->window);
 	    XMapWindow(dpy, c->icon->labelwin);
+	    c->icon->mapped=1;
 	  } else if(c->state==NormalState)
 	    XMapRaised(dpy, c->parent);
 	  else

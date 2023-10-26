@@ -134,7 +134,10 @@ int handler(Display *d, XErrorEvent *e)
       (e->error_code == BadWindow || e->error_code == BadColor))
     return 0;
 
-  if (e->error_code == BadMatch && e->request_code == X_ChangeSaveSet)
+  if ((e->error_code == BadMatch && e->request_code == X_ChangeSaveSet) ||
+      (e->error_code == BadWindow && e->request_code == X_ChangeProperty) ||
+      (e->error_code == BadDrawable && e->request_code == X_GetGeometry) ||
+      (e->error_code == BadWindow && e->request_code == X_SendEvent))
     return 0;
   
   XmuPrintDefaultErrorMessage(d, e, stderr);
@@ -283,7 +286,7 @@ void drawrubber()
     XDrawRectangle(dpy, rubberclient->scr->back, rubberclient->scr->rubbergc,
 		   rubberx, rubbery, rubberw-1, rubberh-1);
   else if(boundingwin) {
-    const char dash_list[] = { 6, 6 };
+    const char dash_list[] = { 6 };
     int x=rubberx, y=rubbery, w=rubberw, h=rubberh;
     if(w<0) { x+=w; w=-w; }
     if(h<0) { y+=h; h=-h; }
@@ -304,7 +307,7 @@ static void move_dashes(void *dontcare)
   call_out(50, move_dashes, dontcare);
   drawrubber();
   if((--d_offset)<0)
-    d_offset=7;
+    d_offset=11;
   drawrubber();
 }
 
@@ -353,7 +356,7 @@ void startbounding(Scrn *s, Window w, XEvent *e)
   boundingscr=s;
   boundingwin=w;
   XGrabPointer(dpy, w, False, Button1MotionMask|ButtonPressMask|
-	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None,
+	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, s->back, None,
 	       CurrentTime);
   XGrabServer(dpy);
   rubberx=e->xbutton.x;
@@ -369,7 +372,6 @@ void startbounding(Scrn *s, Window w, XEvent *e)
 void endbounding(XEvent *e)
 {
   Icon *i;
-  XWindowAttributes attr;
 
   if(boundingscr) {
     remove_call_out(move_dashes, NULL);
@@ -387,10 +389,9 @@ void endbounding(XEvent *e)
     }
     if(rubberw>=HYSTERESIS || rubberh>=HYSTERESIS)
       for(i=boundingscr->icons; i; i=i->next)
-	if(i->window && XGetWindowAttributes(dpy, i->window, &attr) &&
-	   attr.map_state==IsViewable &&
-	   attr.x<rubberx+rubberw && attr.y<rubbery+rubberh &&
-	   attr.x+attr.width>rubberx && attr.y+attr.height>rubbery)
+	if(i->window && i->mapped &&
+	   i->x<rubberx+rubberw && i->y<rubbery+rubberh &&
+	   i->x+i->width>rubberx && i->y+i->height>rubbery)
 	  selecticon(i);
     boundingscr=NULL;
     XUngrabServer(dpy);
@@ -403,8 +404,8 @@ void startdragging(Client *c, XEvent *e)
   scr=c->scr;
   dragclient=c;
   XGrabPointer(dpy, c->drag, False, Button1MotionMask|ButtonPressMask|
-	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None,
-	       CurrentTime);
+	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, scr->back,
+	       None, CurrentTime);
   XGrabServer(dpy);
   initrubber(e->xbutton.x_root, e->xbutton.y_root, c);
   rubberx0-=rubberx;
@@ -426,7 +427,7 @@ void startscreendragging(Scrn *s, XEvent *e)
 {
   dragscreen=s;
   XGrabPointer(dpy, s->menubar, False, Button1MotionMask|ButtonPressMask|
-	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None,
+	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, s->root, None,
 	       CurrentTime);
   olddragy=rubbery=s->y;
   rubbery0=e->xbutton.y_root-rubbery;
@@ -501,13 +502,17 @@ void endicondragging(XEvent *e)
     return;
   }
 
+  for(i=0; i<numdragicons; i++)
+    dragiconlist[i].icon->mapped=0;
   for(i=0; i<numdragicons; i++) {
     if(dragiconlist[i].icon->scr!=scr)
       reparenticon(dragiconlist[i].icon, scr,
 		   dragiconlist[i].x-4, dragiconlist[i].y-4-scr->y);
     else
       XMoveWindow(dpy, dragiconlist[i].icon->window,
-		  dragiconlist[i].x-4, dragiconlist[i].y-4-scr->y);
+		  dragiconlist[i].icon->x = dragiconlist[i].x-4,
+		  dragiconlist[i].icon->y = dragiconlist[i].y-4-scr->y);
+    dragiconlist[i].icon->mapped=1;
     adjusticon(dragiconlist[i].icon);
   }
   aborticondragging();
@@ -580,8 +585,8 @@ void starticondragging(Scrn *scr, XEvent *e)
     numdragicons++;
   }
   XGrabPointer(dpy, scr->back, False, Button1MotionMask|ButtonPressMask|
-	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None,
-	       CurrentTime);
+	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, scr->root,
+	       None, CurrentTime);
   olddragx = rubberx0 = e->xbutton.x_root;
   olddragy = rubbery0 = e->xbutton.y_root;
 }
@@ -612,6 +617,7 @@ void do_icon_double_click(Scrn *scr)
       XUnmapWindow(dpy, i->labelwin);
     if(i->window)
       XUnmapWindow(dpy, i->window);
+    i->mapped=0;
     deselecticon(i);
     if(c=(i->client)) {
       XMapWindow(dpy, c->window);
@@ -626,8 +632,8 @@ void startresizing(Client *c, XEvent *e)
 {
   resizeclient=c;
   XGrabPointer(dpy, c->resize, False, Button1MotionMask|ButtonPressMask|
-	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None,
-	       CurrentTime);
+	       ButtonReleaseMask, GrabModeAsync, GrabModeAsync,
+	       c->scr->back, None, CurrentTime);
   XGrabServer(dpy);
   initrubber(e->xbutton.x_root, e->xbutton.y_root, c);
   rubberx0-=rubberw;
@@ -709,11 +715,16 @@ int main(int argc, char *argv[])
   FD_SET((x_fd=ConnectionNumber(dpy)), &master_fd_set);
   max_fd=x_fd+1;
 
+  initting = 1;
+  XSetErrorHandler(handler);
+
+  XSelectInput(dpy, DefaultRootWindow(dpy), SubstructureRedirectMask);
+  XSync(dpy, False);
+  XSelectInput(dpy, DefaultRootWindow(dpy), NoEventMask);
+
   init_modules();
   read_rc_file();
 
-  initting = 1;
-  XSetErrorHandler(handler);
   if (signal(SIGTERM, sighandler) == SIG_IGN)
     signal(SIGTERM, SIG_IGN);
   if (signal(SIGINT, sighandler) == SIG_IGN)
@@ -742,6 +753,9 @@ int main(int argc, char *argv[])
     fd_set rfds;
     struct timeval t;
     XEvent event;
+    Window dummy_root;
+    int dummy_x, dummy_y;
+    unsigned int dummy_w, dummy_h, dummy_bw, dummy_d;
 
     while((!signalled) && QLength(dpy)>0) {
       Client *c; Icon *i;
@@ -912,6 +926,8 @@ int main(int argc, char *argv[])
 	    adjusticon(c->icon);
 	    XMapWindow(dpy, c->icon->window);
 	    XMapWindow(dpy, c->icon->labelwin);
+	    c->icon->mapped=1;
+	    setclientstate(c, IconicState);
 	    break;
 	  }
 	}
@@ -1141,7 +1157,9 @@ int main(int argc, char *argv[])
 	break;
       case PropertyNotify:
 	if(event.xproperty.atom != None && c &&
-	   event.xproperty.window==c->window)
+	   event.xproperty.window==c->window &&
+	   XGetGeometry(dpy, c->window, &dummy_root, &dummy_x, &dummy_y,
+			&dummy_w, &dummy_h, &dummy_bw, &dummy_d))
 	  propertychange(c, event.xproperty.atom);
 	break;
       default:

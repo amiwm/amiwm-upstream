@@ -104,6 +104,16 @@ static void destroy_module(struct module *m)
   free(m);
 }
 
+static void sieve_modules()
+{
+  struct module *m, **p;
+  for(p=&modules; m=*p; )
+    if(!m->pid) {
+      *p=m->next;
+      destroy_module(m);
+    } else p=&(m->next);
+}
+
 void reap_children(int sig)
 {
   pid_t pid;
@@ -122,11 +132,10 @@ void reap_children(int sig)
 #else
     {
 #endif
-      struct module *m, **p;
-      for(p=&modules; m=*p; p=&(m->next))
+      struct module *m;
+      for(m=modules; m; m=m->next)
 	if(m->pid==pid) {
-	  *p=m->next;
-	  destroy_module(m);
+	  m->pid=0;
 	  break;
 	}
     }
@@ -162,6 +171,7 @@ void create_module(Scrn *screen, char *module_name, char *module_arg)
   reap_children(0);
 #endif
 #endif
+  sieve_modules();
   for(pathelt=strtok(prefs.module_path, ":"); pathelt;
       pathelt=strtok(NULL, ":")) {
     sprintf(destpath, "%s/%s", pathelt, module_name);
@@ -197,8 +207,8 @@ void create_module(Scrn *screen, char *module_name, char *module_arg)
 	if(rcfile)
 	  close(fileno(rcfile));
 	for(m=modules; m; m=m->next) {
-	  close(m->in_fd);
-	  close(m->out_fd);
+	  if(m->in_fd>=0) close(m->in_fd);
+	  if(m->out_fd>=0) close(m->out_fd);
 	}
 	close(fds1[1]);
 	close(fds2[0]);
@@ -347,6 +357,7 @@ static void handle_module_cmd(struct module *m, char *data, int data_len)
       adjusticon(c->icon);
       XMapWindow(dpy, c->icon->window);
       XMapWindow(dpy, c->icon->labelwin);
+      c->icon->mapped=1;
       setclientstate(c, IconicState);
       reply_module(m, NULL, 0);
     } else
@@ -360,7 +371,12 @@ static void handle_module_cmd(struct module *m, char *data, int data_len)
 static void module_input_callback(struct module *m)
 {
   unsigned char buffer[8192], *p=buffer;
-  int r=read(m->in_fd, buffer, sizeof(buffer));
+  int r;
+  if(!(m->pid)) {
+    sieve_modules();
+    return;
+  }
+  r=read(m->in_fd, buffer, sizeof(buffer));
   if(r<0 && errno!=EINTR) {
     perror("module");
     close(m->in_fd);
@@ -373,6 +389,7 @@ static void module_input_callback(struct module *m)
     reap_children(0);
 #endif
 #endif
+    sieve_modules();
     return;
   }
   while(r>0) {
@@ -416,6 +433,9 @@ void handle_module_input(fd_set *r)
 void flushmodules()
 {
   struct module *n, *m=modules;
+  int i;
+  extern char *progname;
+
   while(m) {
     n=m->next;
     if(m->in_fd>=0) {
@@ -429,7 +449,15 @@ void flushmodules()
     }
     if(m->pid>0)
       kill(m->pid, SIGHUP);
-    destroy_module(m);
     m=n;
   }
+  for(i=5; i>0; --i) {
+    sieve_modules();
+    if(!modules)
+      break;
+    sleep(1);
+  }
+  sieve_modules();
+  if(modules)
+    fprintf(stderr, "%s: giving up waiting for modules to die!\n", progname);
 }

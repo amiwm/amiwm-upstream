@@ -1,5 +1,6 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "drawinfo.h"
@@ -453,6 +454,7 @@ void gadgetunclicked(Client *c, XEvent *e)
       adjusticon(c->icon);
       XMapWindow(dpy, c->icon->window);
       XMapWindow(dpy, c->icon->labelwin);
+      c->icon->mapped=1;
       setclientstate(c, IconicState);
     }
   }

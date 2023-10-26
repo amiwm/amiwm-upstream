@@ -332,7 +332,7 @@ void createmenubar()
   m=add_menu("Workbench", 0);
   add_item(m,"Backdrop",'B',CHECKIT|CHECKED|DISABLED);
   add_item(m,"Execute Command...",'E',0);
-  add_item(m,"Redraw All",0,DISABLED);
+  add_item(m,"Redraw All",0,0);
   add_item(m,"Update All",0,DISABLED);
   add_item(m,"Last Message",0,DISABLED);
   add_item(m,"About...",'?',0);
@@ -565,7 +565,7 @@ void menu_on()
     XRaiseWindow(dpy, scr->menubar);
     XGrabPointer(dpy, scr->back, True, ButtonPressMask|ButtonReleaseMask|
 		EnterWindowMask|LeaveWindowMask, GrabModeAsync, GrabModeAsync,
-		None, wm_curs, CurrentTime);
+		scr->back, wm_curs, CurrentTime);
     XSetInputFocus(dpy, scr->menubar, RevertToParent, CurrentTime);
     if(XQueryPointer(dpy, scr->menubarparent, &r, &c, &rx, &ry, &x, &y, &m))
       menubar_enter(c);
@@ -591,6 +591,23 @@ void menuaction(struct Item *i, struct Item *si)
     switch(item) {
     case 1:
       spawn(BIN_PREFIX"executecmd");
+      break;
+    case 2:
+      {
+	XSetWindowAttributes xswa;
+	unsigned long mask;
+	Window win;
+	xswa.background_pixmap = None;
+	xswa.override_redirect = True;
+	xswa.backing_store = NotUseful;
+	xswa.save_under = False;
+	mask = CWBackPixmap|CWOverrideRedirect|CWBackingStore|CWSaveUnder;
+	win = XCreateWindow(dpy, scr->back, 0, 0, scr->width, scr->height,
+			    0, scr->depth, InputOutput,
+			    scr->visual, mask, &xswa);
+	XMapWindow(dpy, win);
+	XDestroyWindow(dpy, win);
+      }
       break;
     case 5:
 #ifdef AMIGAOS
@@ -708,8 +725,10 @@ void menu_off()
     XClearWindow(dpy, oa->win);
     redraw_menu(oa, oa->win);
   }
-  if(oi)
+  if(oi) {
+    XSync(dpy, False);
     menuaction(oi, osi);
+  }
 }
 
 struct Item *getitembyhotkey(char key)

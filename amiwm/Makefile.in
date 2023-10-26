@@ -8,12 +8,13 @@ CFLAGS = @CFLAGS@
 YFLAGS = -d
 DEFS = @DEFS@
 ALL_CFLAGS = -I@srcdir@ -I@srcdir@/libami $(DEFS) $(CFLAGS) @X_CFLAGS@
-LIBS = @X_LIBS@ @X_PRE_LIBS@ -Llibami -lami -lXext -lXmu -lX11 \
-	@X_EXTRA_LIBS@ @LIBS@
+LIBS = @X_LIBS@ @X_PRE_LIBS@ -Llibami -lami @XT_LIB_KLUDGE@ -lXext -lXmu \
+	-lX11 @X_EXTRA_LIBS@ @LIBS@
 prefix = @prefix@
 exec_prefix = @exec_prefix@
 bindir = $(exec_prefix)/bin
 libdir = $(exec_prefix)/lib
+mandir = $(prefix)/man
 INSTALL = @INSTALL@
 LN_S = @LN_S@
 RM = -rm -f
@@ -32,8 +33,9 @@ SRCS = main.c screen.c client.c frame.c icc.c \
 		module.c \
 		requestchoice.c executecmd.c kbdmodule.c kbdlexer.c
 
-DISTFILES = README README.modules INSTALL configure configure.in Makefile.in \
-	install-sh smakefile scoptions *.[chly] system.amiwmrc def_tool.info \
+DISTFILES = README README.modules INSTALL amiwm.1 \
+	configure configure.in Makefile.in install-sh smakefile scoptions \
+	*.[chly] system.amiwmrc def_tool.info \
 	Background libami/Makefile.in libami/*.[chly]
 
 PACKAGENAME = amiwm
@@ -71,17 +73,23 @@ kbdlexer.c : kbdlexer.l
 	$(LEX) -t kbdlexer.l > kbdlexer.c
 
 install : $(PROGS) $(MODULES)
-	mkdir -p $(AMIWM_HOME)
-	$(INSTALL) requestchoice $(AMIWM_HOME)/requestchoice
-	$(INSTALL) executecmd $(AMIWM_HOME)/executecmd
+	-mkdir -p $(AMIWM_HOME)
+	$(INSTALL) -s requestchoice $(AMIWM_HOME)/requestchoice
+	$(INSTALL) -s executecmd $(AMIWM_HOME)/executecmd
 	for module in $(MODULES); do \
-	  $(INSTALL) $$module $(AMIWM_HOME)/$$module; \
+	  if [ "$$module" = "Background" ]; then \
+	    $(INSTALL) $$module $(AMIWM_HOME)/$$module; \
+	  else \
+	    $(INSTALL) -s $$module $(AMIWM_HOME)/$$module; \
+	  fi \
 	done
 	$(INSTALL) -m 644 system.amiwmrc $(AMIWM_HOME)/system.amiwmrc
 	$(INSTALL) -m 644 def_tool.info $(AMIWM_HOME)/def_tool.info
-	$(INSTALL) amiwm $(bindir)/amiwm
+	$(INSTALL) -s amiwm $(bindir)/amiwm
 	$(RM) $(bindir)/requestchoice
 	$(LN_S) $(AMIWM_HOME)/requestchoice $(bindir)/requestchoice
+	-mkdir -p $(mandir)/man1
+	$(INSTALL) -m 644 amiwm.1 $(mandir)/man1/amiwm.1
 
 amiwm : $(OBJS) lib
 	$(CC) -o amiwm $(OBJS) $(LIBS)

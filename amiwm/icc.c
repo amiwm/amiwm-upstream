@@ -118,7 +118,8 @@ void propertychange(Client *c, Atom a)
 	createiconicon(c->icon, xwmh);
       }
       if((xwmh->flags&IconPositionHint)&&c->icon&&c->icon->window) {
-	XMoveWindow(dpy, c->icon->window, xwmh->icon_x, xwmh->icon_y);
+	XMoveWindow(dpy, c->icon->window, c->icon->x=xwmh->icon_x,
+		    c->icon->y=xwmh->icon_y);
 	adjusticon(c->icon);
       }
       XFree(xwmh);
@@ -149,6 +150,7 @@ void handle_client_message(Client *c, XClientMessageEvent *xcme)
 	adjusticon(c->icon);
 	XMapWindow(dpy, c->icon->window);
 	XMapWindow(dpy, c->icon->labelwin);
+	c->icon->mapped=1;
 	setclientstate(c, IconicState);
       } else ;
     else
@@ -158,6 +160,7 @@ void handle_client_message(Client *c, XClientMessageEvent *xcme)
 	  XUnmapWindow(dpy, i->labelwin);
 	if(i->window)
 	  XUnmapWindow(dpy, i->window);
+	i->mapped=0;
 	deselecticon(i);
 	XMapWindow(dpy, c->window);
 	if(c->parent!=c->scr->root)

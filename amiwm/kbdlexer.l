@@ -122,15 +122,15 @@ int parse_keyword(char *str, YYSTYPE *val)
 \|		{ return BAR; }
 
 [\r\n\t ]       { ; }
- 
+
 .               { fprintf(stderr, "%s: illegal character \"%s\" ignored\n",
                           progname, yytext); }
-
 %%
+
 #ifndef yywrap
 int yywrap() { return 1; }
 #endif
 #undef input
-#define input() ((*inptr)?(*inptr++):EOF)
+#define input() ((*inptr)?(*inptr++):0)
 #undef unput
 #define unput(c) (*--inptr=c)

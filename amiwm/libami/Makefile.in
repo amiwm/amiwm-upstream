@@ -18,10 +18,10 @@ INSTALL = @INSTALL@
 LN_S = @LN_S@
 
 OBJS  = drawinfo.o module.o broker.o eventdispatcher.o mdscreen.o \
-	kbdsupport.o hotkey.o readargs.o
+	kbdsupport.o hotkey.o lists.o readargs.o error.o
 
 SRCS = drawinfo.c module.c broker.c eventdispatcher.c mdscreen.c \
-	kbdsupport.c hotkey.c readargs.c
+	kbdsupport.c hotkey.c lists.c readargs.c error.c
 
 all : libami.a
 

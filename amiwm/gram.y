@@ -77,8 +77,8 @@ stmt		: error
 		| FORCEMOVE forcemove_policy { prefs.forcemove = $2; }
 		| SCREEN string { openscreen($2,DefaultRootWindow(dpy)); }
 		| MODULEPATH string { prefs.module_path = $2; }
-		| MODULE STRING STRING { create_module((front? front->upfront:NULL), $2, $3); }
-		| MODULE STRING { create_module((front? front->upfront:NULL), $2, NULL); }
+		| MODULE string STRING { create_module((front? front->upfront:NULL), $2, $3); }
+		| MODULE string { create_module((front? front->upfront:NULL), $2, NULL); }
 		| INTERSCREENGAP NUMBER { prefs.borderwidth=$2; }
 		| AUTORAISE truth { prefs.autoraise=$2; }
 		;

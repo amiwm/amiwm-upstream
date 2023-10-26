@@ -1,4 +1,6 @@
 %{
+#include <stdio.h>
+#include <string.h>
 #include "libami.h"
 
 void docmd(XEvent *e, void *callback)

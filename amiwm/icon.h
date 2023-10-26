@@ -10,8 +10,9 @@ typedef struct _Icon {
   Window window, labelwin, innerwin;
   Pixmap iconpm, secondpm;
   XTextProperty label;
+  int x, y, width, height;
   int labelwidth;
-  int selected;
+  int selected, mapped;
 } Icon;
 
 #endif

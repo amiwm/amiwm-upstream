@@ -1524,7 +1524,7 @@ EOF
 
 fi
 
-for ac_hdr in fcntl.h limits.h sys/time.h unistd.h sys/select.h sys/resource.h
+for ac_hdr in fcntl.h limits.h sys/time.h unistd.h sys/select.h sys/resource.h sys/stat.h termio.h
 do
 ac_safe=`echo "$ac_hdr" | tr './\055' '___'`
 echo $ac_n "checking for $ac_hdr""... $ac_c" 1>&6
@@ -2210,6 +2210,35 @@ rm -f conftest*
 
 
 
+old_LIBS="$LIBS"
+LIBS="$X_LIBS $X_PRE_LIBS -lXext -lXmu -lX11 $X_EXTRA_LIBS $LIBS"
+cat > conftest.$ac_ext <<EOF
+#line 2217 "configure"
+#include "confdefs.h"
+
+int main() { return 0; }
+int t() {
+
+  extern void XmuCopyISOLatin1Lowered(char *,char *);
+  char foo[]="FOO";
+  XmuCopyISOLatin1Lowered (foo, foo);
+
+; return 0; }
+EOF
+if eval $ac_link; then
+  rm -rf conftest*
+  XT_LIB_KLUDGE=""
+else
+  rm -rf conftest*
+  XT_LIB_KLUDGE="-lXt"
+fi
+rm -f conftest*
+
+LIBS="$old_LIBS"
+
+
+
+
 trap '' 1 2 15
 cat > confcache <<\EOF
 # This file is a shell script that caches the results of configure
@@ -2354,6 +2383,7 @@ s%@X_PRE_LIBS@%$X_PRE_LIBS%g
 s%@X_LIBS@%$X_LIBS%g
 s%@X_EXTRA_LIBS@%$X_EXTRA_LIBS%g
 s%@ALLOCA@%$ALLOCA%g
+s%@XT_LIB_KLUDGE@%$XT_LIB_KLUDGE%g
 s%@x_includes@%$x_includes%g
 s%@x_libraries@%$x_libraries%g
 

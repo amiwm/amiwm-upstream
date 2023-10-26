@@ -5,6 +5,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_FCNTL_H
+#include <fcntl.h>
+#endif
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifdef HAVE_SYS_STAT_H
+#include <sys/stat.h>
+#endif
+#include <errno.h>
 
 #include "drawinfo.h"
 
@@ -247,9 +257,8 @@ void endchoice()
 
   abortchoice();
   XCloseDisplay(dpy);
-  if(c==1) {
+  if(c==1)
     system(cmdline);
-  }
   exit(0);
 }
 
