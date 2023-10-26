@@ -163,7 +163,7 @@ static char *loadstring(FILE *f)
   char buf[4], *p=buf;
   if(1!=fread(buf, 4, 1, f) || (l=getu32(&p))>SANITYMAXLEN || !(p=malloc(l)))
     return NULL;
-  fread(p, 1, l, f);
+  (void)! fread(p, 1, l, f);
   return p;
 }
 
@@ -202,12 +202,12 @@ static struct Image *loadimage(FILE *f)
   if(!(im=malloc(imgsz+sizeof(struct Image))))
     return NULL;
   im->LeftEdge=le; im->TopEdge=te; im->Width=w; im->Height=h;
-  im->Depth=d; im->ImageData=(UWORD*)getu32(&p);
+  im->Depth=d; im->ImageData=(UWORD*)(ptrdiff_t)getu32(&p);
   im->PlanePick=*p++; im->PlaneOnOff=*p++;
-  im->NextImage=(struct Image *)getu32(&p);
+  im->NextImage=(struct Image *)(ptrdiff_t)getu32(&p);
   if(im->ImageData) {
     im->ImageData=(UWORD *)(im+1);
-    fread(im->ImageData, 1, imgsz, f);
+    (void)! fread(im->ImageData, 1, imgsz, f);
   }
   return im;
 }
@@ -249,7 +249,7 @@ static LONG unpack_rle(unsigned char *src, LONG srclen, char *dst, LONG dstlen,
     }
   }
   if(src != srcn)
-    fprintf(stderr, "Warning:  Left %d bytes unused.\n", srcn-src);
+    fprintf(stderr, "Warning:  Left %d bytes unused.\n", (int)(srcn-src));
   return dst-dst0;
 }
 
@@ -382,27 +382,27 @@ static struct DiskObject *int_load_do(char *filename)
 	free(diskobj);
 	return NULL;
       }
-      diskobj->do_Gadget.NextGadget=(struct Gadget *)getu32(&p);
+      diskobj->do_Gadget.NextGadget=(struct Gadget *)(ptrdiff_t)getu32(&p);
       diskobj->do_Gadget.LeftEdge=get16(&p);
       diskobj->do_Gadget.TopEdge=get16(&p);
       diskobj->do_Gadget.Width=get16(&p); diskobj->do_Gadget.Height=get16(&p);
       diskobj->do_Gadget.Flags=getu16(&p);
       diskobj->do_Gadget.Activation=getu16(&p);
       diskobj->do_Gadget.GadgetType=getu16(&p);
-      diskobj->do_Gadget.GadgetRender=(APTR)getu32(&p);
-      diskobj->do_Gadget.SelectRender=(APTR)getu32(&p);
-      diskobj->do_Gadget.GadgetText=(struct IntuiText *)getu32(&p);
+      diskobj->do_Gadget.GadgetRender=(APTR)(ptrdiff_t)getu32(&p);
+      diskobj->do_Gadget.SelectRender=(APTR)(ptrdiff_t)getu32(&p);
+      diskobj->do_Gadget.GadgetText=(struct IntuiText *)(ptrdiff_t)getu32(&p);
       diskobj->do_Gadget.MutualExclude=get32(&p);
-      diskobj->do_Gadget.SpecialInfo=(APTR)getu32(&p);
+      diskobj->do_Gadget.SpecialInfo=(APTR)(ptrdiff_t)getu32(&p);
       diskobj->do_Gadget.GadgetID=getu16(&p);
-      diskobj->do_Gadget.UserData=(APTR)getu32(&p);
+      diskobj->do_Gadget.UserData=(APTR)(ptrdiff_t)getu32(&p);
       diskobj->do_Type=*p; p+=2;
-      diskobj->do_DefaultTool=(char *)getu32(&p);
-      diskobj->do_ToolTypes=(char **)getu32(&p);
+      diskobj->do_DefaultTool=(char *)(ptrdiff_t)getu32(&p);
+      diskobj->do_ToolTypes=(char **)(ptrdiff_t)getu32(&p);
       diskobj->do_CurrentX=get32(&p);
       diskobj->do_CurrentY=get32(&p);
-      diskobj->do_DrawerData=(struct DrawerData *)getu32(&p);
-      diskobj->do_ToolWindow=(char *)getu32(&p);
+      diskobj->do_DrawerData=(struct DrawerData *)(ptrdiff_t)getu32(&p);
+      diskobj->do_ToolWindow=(char *)(ptrdiff_t)getu32(&p);
       diskobj->do_StackSize=get32(&p);
       
       if(diskobj->do_DrawerData) {
@@ -418,11 +418,11 @@ static struct DiskObject *int_load_do(char *filename)
 	  dd->dd_NewWindow.BlockPen=*p++;
 	  dd->dd_NewWindow.IDCMPFlags=getu32(&p);
 	  dd->dd_NewWindow.Flags=getu32(&p);
-	  dd->dd_NewWindow.FirstGadget=(struct Gadget *)getu32(&p);
-	  dd->dd_NewWindow.CheckMark=(struct Image *)getu32(&p);
-	  dd->dd_NewWindow.Title=(UBYTE *)getu32(&p);
-	  dd->dd_NewWindow.Screen=(struct Screen *)getu32(&p);
-	  dd->dd_NewWindow.BitMap=(struct BitMap *)getu32(&p);
+	  dd->dd_NewWindow.FirstGadget=(struct Gadget *)(ptrdiff_t)getu32(&p);
+	  dd->dd_NewWindow.CheckMark=(struct Image *)(ptrdiff_t)getu32(&p);
+	  dd->dd_NewWindow.Title=(UBYTE *)(ptrdiff_t)getu32(&p);
+	  dd->dd_NewWindow.Screen=(struct Screen *)(ptrdiff_t)getu32(&p);
+	  dd->dd_NewWindow.BitMap=(struct BitMap *)(ptrdiff_t)getu32(&p);
 	  dd->dd_NewWindow.MinWidth=get16(&p);
 	  dd->dd_NewWindow.MinHeight=get16(&p);
 	  dd->dd_NewWindow.MaxWidth=getu16(&p);

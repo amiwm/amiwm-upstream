@@ -116,9 +116,6 @@ extern void menubar_enter(Window);
 extern void menubar_leave(Window);
 extern void *getitembyhotkey(KeySym);
 extern void menuaction(void *);
-extern void screentoback();
-extern void openscreen(char *, Window);
-extern void realizescreens(void);
 extern Scrn *getscreenbyroot(Window);
 extern void assimilate(Window, int, int);
 extern void deselect_all_icons(Scrn *);
@@ -568,6 +565,11 @@ void endicondragging(XEvent *e)
     }
   }
 
+  if (!scr->deftitle) {
+      badicondrop();
+      return;
+  }
+  
   if(XTranslateCoordinates(dpy, scr->root, scr->back,
 			   e->xbutton.x_root, e->xbutton.y_root,
 			   &wx, &wy, &ch) && ch!=None) {
@@ -740,7 +742,7 @@ void do_icon_double_click(Scrn *scr)
       deselecticon(i);
       if((c=(i->client))) {
 	XMapWindow(dpy, c->window);
-	if(c->parent!=c->scr->root)
+	if(c->parent!=c->scr->root && !c->fullscreen)
 	  XMapRaised(dpy, c->parent);
 	setclientstate(c, NormalState);
       }
@@ -804,7 +806,7 @@ static void instcmap(Colormap c)
 
 void internal_broker(XEvent *e)
 {
-  int event_loc=(int)e->xany.display;
+  ptrdiff_t event_loc=(ptrdiff_t)e->xany.display;
   e->xany.display=dpy;
   if(event_loc==1) {
     XSendEvent(dpy, e->xany.window, False, 0, e);
@@ -1047,7 +1049,8 @@ int main(int argc, char *argv[])
 	  XDeleteContext(dpy, event.xdestroywindow.window, screen_context);
 	break;
       case UnmapNotify:
-	if(c && c->active && (event.xunmap.window==c->parent)) {
+	if(c && c->active && (event.xunmap.window==c->parent) &&
+	   !(c->fullscreen && c->state == NormalState)) {
 	  c->active=False;
 	  activeclient = NULL;
 	  redrawclient(c);
@@ -1201,7 +1204,8 @@ int main(int argc, char *argv[])
 	      reparent(c);
 	  case NormalState:
 	    XMapWindow(dpy, c->window);
-	    XMapRaised(dpy, c->parent);
+	    if (!c->fullscreen)
+	      XMapRaised(dpy, c->parent);
 	    setclientstate(c, NormalState);
 	    break;
 	  case IconicState:

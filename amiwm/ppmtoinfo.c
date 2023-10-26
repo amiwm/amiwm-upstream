@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_TIME_H
+#include <time.h>
+#endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -94,7 +97,7 @@ pixel **readppm(FILE *file, int *colsP, int *rowsP, pixval *maxvalP)
     if(format==3)
       for( col = 0; col < *colsP; ++col) {
 	int r, g, b;
-	fscanf(file, "%d %d %d", &r, &g, &b);
+	(void)! fscanf(file, "%d %d %d", &r, &g, &b);
 	pixels[row][col].r=r;
 	pixels[row][col].g=g;
 	pixels[row][col].b=b;

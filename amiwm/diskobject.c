@@ -147,7 +147,7 @@ static int custom_palette_from_file(char *fn, int ignorenofile)
     unsigned int r, g, b;
     char nam[16];
     if(format==3)
-      fscanf(file, "%u %u %u", &r, &g, &b);
+      (void)! fscanf(file, "%u %u %u", &r, &g, &b);
     else {
       r = getc(file);
       g = getc(file);

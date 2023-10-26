@@ -395,7 +395,7 @@ void endchoice()
   abortchoice();
   XCloseDisplay(dpy);
   if(c==1)
-    system(cmdline);
+    (void)! system(cmdline);
   exit(0);
 }
 

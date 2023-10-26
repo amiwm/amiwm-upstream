@@ -132,7 +132,7 @@ static UBYTE * ra_realloc(struct RDArgs *rdargs, UBYTE **start, UBYTE **end)
 
 static LONG CS_ReadChar(struct CSource *cSource)
 {
-  if(!cSource || ((LONG)cSource)==-1 || !cSource->CS_Buffer) {
+  if(!cSource || ((LONG)(ptrdiff_t)cSource)==-1 || !cSource->CS_Buffer) {
     if(cmdline && *cmdline) {
       return (unsigned char)(*cmdline++);
     } else
@@ -145,7 +145,7 @@ static LONG CS_ReadChar(struct CSource *cSource)
 
 static void CS_UnReadChar(struct CSource *cSource, UBYTE ch)
 {
-  if(!cSource || ((LONG)cSource)==-1 || !cSource->CS_Buffer) {
+  if(!cSource || ((LONG)(ptrdiff_t)cSource)==-1 || !cSource->CS_Buffer) {
     if(cmdline && *cmdline)
       --cmdline;
     else
@@ -464,7 +464,7 @@ quoted:
       sw=switches[argnum];
       switches[argnum]|=RA_FOUND;
       if(!rdargs) {
-        ((Argtype *)array)[argnum].num=((LONG)start)>>2;
+        ((Argtype *)array)[argnum].num=((LONG)(ptrdiff_t)start)>>2;
         start+=((*start)&~3)+4;
         continue;
       }
@@ -499,7 +499,7 @@ numeric:
 	  goto fail;
         }
 	start+=sizeof(Argtype)-1;
-	start-=((LONG)start)&(sizeof(Argtype)-1);
+	start-=((LONG)(ptrdiff_t)start)&(sizeof(Argtype)-1);
         if(end-start<sizeof(LONG))
 	  if(!ra_realloc(rdargs, &start, &end))
 	    goto nomemfail;

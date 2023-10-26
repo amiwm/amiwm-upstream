@@ -308,7 +308,7 @@ int dispatch_event_to_broker(XEvent *e, unsigned long mask, struct module *m)
       struct mcmd_event me;
       me.mask=mask;
       me.event=*e;
-      reply_module(m, (char *)&me, ~sizeof(me));
+      reply_module(m, (char *)&me, ~(int)sizeof(me));
       return 1;
     }
     m=m->next;

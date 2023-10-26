@@ -8,6 +8,8 @@ void docmd(XEvent *e, void *callback)
   ((void (*)(Window))callback)(e->xany.window);
 }
 
+int yyerror(char *s);
+extern int yylex (void);
 %}
 
 %union

@@ -1,5 +1,7 @@
 #include "libami.h"
 
+#include <string.h>
+
 #ifndef AMIGAOS
 
 void NewList(struct List *list)

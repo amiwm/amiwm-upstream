@@ -44,6 +44,9 @@ static void append_to(char **x, char *y)
 }
 
 static int ti_level=0;
+
+int yyerror(char *s);
+extern int yylex (void);
 %}
 
 %union
