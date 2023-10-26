@@ -1,0 +1,109 @@
+srcdir = @srcdir@
+VPATH = @srcdir@
+SHELL = /bin/sh
+CC = @CC@
+LEX = @LEX@
+YACC = @YACC@
+CFLAGS = @CFLAGS@
+YFLAGS = -d
+DEFS = @DEFS@
+ALL_CFLAGS = -I@srcdir@ $(DEFS) $(CFLAGS) @X_CFLAGS@
+LIBS = @X_LIBS@ @X_PRE_LIBS@ -lXext -lXmu -lX11 @X_EXTRA_LIBS@ @LIBS@
+prefix = @prefix@
+exec_prefix = @exec_prefix@
+bindir = $(exec_prefix)/bin
+libdir = $(exec_prefix)/lib
+INSTALL = @INSTALL@
+LN_S = @LN_S@
+
+PROGS = amiwm requestchoice executecmd
+
+OBJS  = main.o drawinfo.o client.o frame.o icc.o \
+		icon.o menu.o diskobject.o gram.o lex.o rc.o
+
+SRCS = main.c drawinfo.c client.c frame.c icc.c \
+		icon.c menu.c diskobject.c gram.c lex.c rc.c \
+		requestchoice.c executecmd.c
+
+DISTFILES = README.FIRST README  INSTALL configure configure.in Makefile.in \
+	install-sh smakefile scoptions *.[chly] system.amiwmrc def_tool.info
+
+PACKAGENAME = amiwm
+
+AMIWM_HOME = $(libdir)/amiwm
+
+all : $(PROGS)
+
+.c.o:
+	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) $<
+
+menu.o : menu.c
+	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
+
+rc.o : rc.c
+	$(CC) -c $(CPPFLAGS) $(ALL_CFLAGS) -DAMIWM_HOME=\"$(AMIWM_HOME)\" $<
+
+gram.h gram.c: gram.y
+	$(YACC) $(YFLAGS) gram.y
+	mv y.tab.c gram.c
+	mv y.tab.h gram.h
+
+lex.c : lex.l
+	$(LEX) -t lex.l > lex.c
+
+install : $(PROGS)
+	mkdir -p $(AMIWM_HOME)
+	$(INSTALL) requestchoice $(AMIWM_HOME)/requestchoice
+	$(INSTALL) executecmd $(AMIWM_HOME)/executecmd
+	$(INSTALL) -m 644 system.amiwmrc $(AMIWM_HOME)/system.amiwmrc
+	$(INSTALL) -m 644 def_tool.info $(AMIWM_HOME)/def_tool.info
+	$(INSTALL) amiwm $(bindir)/amiwm
+	$(RM) $(bindir)/requestchoice
+	$(LN_S) $(AMIWM_HOME)/requestchoice $(bindir)/requestchoice
+
+amiwm : $(OBJS)
+	$(CC) -o amiwm $(OBJS) $(LIBS)
+
+requestchoice : requestchoice.o drawinfo.o
+	$(CC) -o requestchoice requestchoice.o drawinfo.o $(LIBS)
+
+executecmd : executecmd.o drawinfo.o
+	$(CC) -o executecmd executecmd.o drawinfo.o $(LIBS)
+
+clean :
+	$(RM) core $(PROGS) *.o
+	$(RM) lex.yy.c lex.c y.tab.c y.tab.h gram.h gram.c
+	$(RM) config.log
+
+distclean : clean
+	$(RM) config.status config.cache *~
+
+TAGS:
+	etags *.c
+
+patch :
+	mv version.h old_version.h
+	sed < old_version.h 's/l/"/' | awk '-F"' '{ printf "%s\"%sl%s\"\n",$$1,$$2,1+$$3 }' > version.h
+	rm old_version.h
+
+dist : version.h clean
+	( version=`sed < version.h -e 's/^[^"]*"//' -e 's/"[^"]*$$//'`; \
+	  tarname="$(PACKAGENAME)$$version.tar"; \
+	  mkdir $(PACKAGENAME); \
+	  cp $(DISTFILES) $(PACKAGENAME)/; \
+	  rm -f $$tarname $$tarname.gz; \
+	  tar cf $$tarname $(PACKAGENAME); \
+	  rm -rf $(PACKAGENAME)/; \
+	  gzip $$tarname; \
+	)
+
+$(srcdir)/configure: configure.in
+	autoconf $(srcdir)/configure.in > $(srcdir)/configure
+
+depend: lex.c gram.c
+	-@rm Makefile.bak
+	mv Makefile Makefile.bak
+	( sed '/^#--DO NOT REMOVE THIS LINE--$$/q' < Makefile.bak ; \
+	  $(CC) -MM $(ALL_CFLAGS) $(SRCS) ) > Makefile
+
+#--DO NOT REMOVE THIS LINE--
